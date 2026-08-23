@@ -1,0 +1,12 @@
+pydantic>=2.9
+pytest>=8.0
+
+# Added as their milestones land:
+#   fastapi + uvicorn   webhook intake (rcp/ingest/webhook.py is already
+#                       framework-agnostic; the route is a thin wrapper)
+#   httpx               rcp/execute/razorpay_rest.py
+#   pyyaml              config/*.yaml
+#   anthropic           rcp/llm/providers/anthropic.py
+#
+# Deliberately absent: any vector store or embedding client. See
+# docs/adr/ADR-006-no-vector-database.md.

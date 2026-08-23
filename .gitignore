@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Generated per-seed databases and audit logs.
+data/seed_*/
+data/scale/
+
+# WAL sidecars, in case a db is ever committed deliberately.
+*.db-wal
+*.db-shm
+
+# NOT ignored, on purpose:
+#   data/llm_cache/   committed so reruns cost nothing and CI stays free
+#   data/fixtures/    recorded Razorpay responses, so tests need no network
