@@ -1,0 +1,148 @@
+# Synthetic event generation. Read by sim/generate.py only.
+#
+# Anything in this file that looks like a probability is a SIM parameter, not a
+# control-plane belief. rcp/ never reads this file -- the control plane has to
+# infer these rates from observed outcomes, which is the point of the exercise.
+
+seed: 42
+n_customers: 200
+n_events: 500
+
+# Fixed sim epoch: 2025-01-01T00:00:00Z. No wall clock anywhere.
+epoch_ms: 1735689600000
+horizon_days: 60
+
+webhook_secret: "whsec_sim_deterministic_do_not_use_in_prod"
+account_id: "acc_SimAccount0001"
+
+segments:
+  subscription: 0.50
+  cart: 0.30
+  receivables: 0.20
+
+languages:
+  en: 0.40
+  hi: 0.20
+  hinglish: 0.40
+
+payday_dom: [1, 5, 7, 10, 15, 25, 30]
+
+amount_paise:
+  min: 20000        # Rs 200
+  max: 1500000      # Rs 15,000
+
+ltv_paise:
+  min: 100000       # Rs 1,000
+  max: 20000000     # Rs 2,00,000
+
+# Retry attempt distribution -- most failures are first attempts.
+retry_index_weights: [0.62, 0.24, 0.10, 0.04]
+
+root_causes:
+  insufficient_funds: 0.34
+  mandate_expired: 0.14
+  card_expired: 0.11
+  bank_downtime: 0.10
+  limit_exceeded: 0.08
+  auth_failed: 0.13
+  invalid_account: 0.06
+  unknown: 0.04
+
+# Bank prefixes multiply the template count: 8 causes x 5 templates x 5 banks
+# = 200 distinct decline strings, which is the corpus rcp/ingest/normalize.py
+# has to collapse back down to 8 enum values.
+banks: ["HDFC", "ICICI", "SBI", "AXIS", "KOTAK"]
+
+# Razorpay-shaped (error_code, error_description) pairs per root cause.
+decline_texts:
+  insufficient_funds:
+    - ["BAD_REQUEST_ERROR", "Your card has insufficient balance to complete this payment"]
+    - ["BAD_REQUEST_ERROR", "Payment failed due to insufficient funds in the account"]
+    - ["GATEWAY_ERROR", "Insufficient balance. Please try another payment method"]
+    - ["BAD_REQUEST_ERROR", "Account does not have enough funds for this transaction"]
+    - ["GATEWAY_ERROR", "Transaction declined - low balance"]
+  mandate_expired:
+    - ["BAD_REQUEST_ERROR", "The mandate for this subscription has expired"]
+    - ["BAD_REQUEST_ERROR", "eMandate is no longer active for this customer"]
+    - ["GATEWAY_ERROR", "Standing instruction was cancelled by the customer"]
+    - ["BAD_REQUEST_ERROR", "Mandate revoked at the issuing bank"]
+    - ["BAD_REQUEST_ERROR", "Subscription mandate expired, re-authorization required"]
+  card_expired:
+    - ["BAD_REQUEST_ERROR", "Your card has expired"]
+    - ["BAD_REQUEST_ERROR", "Expired card - please update your payment method"]
+    - ["GATEWAY_ERROR", "Card expiry date is in the past"]
+    - ["BAD_REQUEST_ERROR", "The card used has expired, use a different card"]
+    - ["GATEWAY_ERROR", "Payment instrument expired"]
+  bank_downtime:
+    - ["GATEWAY_ERROR", "The bank is currently down, please retry later"]
+    - ["GATEWAY_ERROR", "Issuer unavailable at the moment"]
+    - ["SERVER_ERROR", "Gateway timeout while contacting the bank"]
+    - ["GATEWAY_ERROR", "Bank server not responding"]
+    - ["SERVER_ERROR", "Acquirer is temporarily unavailable"]
+  limit_exceeded:
+    - ["BAD_REQUEST_ERROR", "Transaction amount exceeds the per transaction limit"]
+    - ["BAD_REQUEST_ERROR", "Daily spending limit exceeded for this card"]
+    - ["GATEWAY_ERROR", "Amount exceeds the allowed threshold for this account"]
+    - ["BAD_REQUEST_ERROR", "Card limit exceeded, contact your bank"]
+    - ["GATEWAY_ERROR", "Per transaction limit exceeded"]
+  auth_failed:
+    - ["BAD_REQUEST_ERROR", "Payment failed because of incorrect OTP"]
+    - ["BAD_REQUEST_ERROR", "3DS authentication failed for this payment"]
+    - ["GATEWAY_ERROR", "Customer entered an invalid CVV"]
+    - ["BAD_REQUEST_ERROR", "Authentication declined by the issuing bank"]
+    - ["BAD_REQUEST_ERROR", "Invalid PIN entered by the customer"]
+  invalid_account:
+    - ["BAD_REQUEST_ERROR", "The account is invalid or has been closed"]
+    - ["BAD_REQUEST_ERROR", "Card is blocked by the issuing bank"]
+    - ["GATEWAY_ERROR", "Account not found at the bank"]
+    - ["BAD_REQUEST_ERROR", "The card number is invalid"]
+    - ["GATEWAY_ERROR", "Account has been frozen"]
+  unknown:
+    - ["GATEWAY_ERROR", "Payment failed. Please try again"]
+    - ["SERVER_ERROR", "An unexpected error occurred"]
+    - ["GATEWAY_ERROR", "Transaction could not be completed"]
+    - ["SERVER_ERROR", "Payment processing error"]
+    - ["GATEWAY_ERROR", "Declined by the bank without a reason code"]
+
+# --- outcome model (sim/outcomes.py) -- ground truth, never read by rcp/ ---
+outcomes:
+  # Probability a well-timed, well-chosen action recovers the payment.
+  base_rate:
+    insufficient_funds: 0.42
+    mandate_expired: 0.28
+    card_expired: 0.34
+    bank_downtime: 0.61
+    limit_exceeded: 0.31
+    auth_failed: 0.45
+    invalid_account: 0.09
+    unknown: 0.22
+
+  # How much the channel matters, given the root cause is addressable.
+  channel_effectiveness:
+    retry: 1.00
+    whatsapp: 0.86
+    sms: 0.72
+    email: 0.48
+    voice: 0.64
+
+  # Timing multiplier by payday phase. This is the signal the subscription
+  # proposer is supposed to discover and exploit.
+  payday_multiplier:
+    post_payday: 1.45
+    pre_payday: 0.55
+    mid_cycle: 0.85
+    unknown: 1.00
+
+  # Retrying a dead mandate does not work no matter how well timed.
+  channel_required:
+    mandate_expired: [whatsapp, sms, email, voice]
+    card_expired: [whatsapp, sms, email, voice]
+    invalid_account: [whatsapp, sms, email, voice]
+
+  # Each additional contact in the window raises opt-out risk.
+  opt_out_base: 0.012
+  opt_out_per_extra_contact: 0.021
+
+  propensity:
+    min: 0.55
+    max: 1.35

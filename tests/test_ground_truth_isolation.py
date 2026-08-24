@@ -22,6 +22,10 @@ FORBIDDEN_STRINGS = ("truth.db", "truth_params", "customer_latent", "counterfact
 
 # Anything that would make two runs of the same seed diverge.
 NONDETERMINISTIC_CALLS = ("random", "uuid")
+# Wall-clock readers. rcp/ may use `datetime` for calendar arithmetic (see
+# rcp/timeutil.py) but must never ask what time it is now -- time arrives as an
+# explicit now_ms argument.
+WALL_CLOCK_ATTRS = ("now", "utcnow", "today", "monotonic", "perf_counter")
 NONDETERMINISTIC_SQL = ("random()", "datetime('now')", "current_timestamp", "randomblob")
 
 
@@ -94,6 +98,13 @@ def test_rcp_decision_path_is_deterministic(path: Path):
             assert needle not in lowered, (
                 f"{path.relative_to(REPO_ROOT)} has SQL containing {needle!r}; "
                 f"a decision query must be reproducible"
+            )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr not in WALL_CLOCK_ATTRS, (
+                f"{path.relative_to(REPO_ROOT)} calls .{node.func.attr}(); rcp/ "
+                f"must take time as an explicit now_ms argument"
             )
 
 

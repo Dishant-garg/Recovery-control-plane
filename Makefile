@@ -1,23 +1,36 @@
-PY := .venv/bin/python
-SEED ?= 42
+PY    := .venv/bin/python
+SEED  ?= 42
+SEEDS ?=
 
-.PHONY: setup test verify-audit clean help
-.PHONY: data baseline eval demo live sensitivity scale
+.PHONY: setup test verify-audit clean help data baseline eval demo scale
+.PHONY: live sensitivity
 
 help:
-	@echo "Working today:"
 	@echo "  make setup         venv + dependencies"
+	@echo "  make data          generate seeded synthetic events (SEED=$(SEED))"
+	@echo "  make eval          baseline vs control plane, 20 seeds"
+	@echo "  make baseline      baseline only"
+	@echo "  make demo          data + eval"
 	@echo "  make test          full invariant suite"
 	@echo "  make verify-audit  recompute the audit hash chain (exit 1 on tamper)"
-	@echo "  make clean         drop generated data for SEED=$(SEED)"
-	@echo ""
-	@echo "Pending (need sim/ and eval/):"
-	@echo "  make data baseline eval demo live sensitivity scale"
+	@echo "  make scale         100k-event stress run for docs/SCALE.md"
+	@echo "  make clean         drop generated data"
 
 setup:
 	python3 -m venv .venv
 	$(PY) -m pip install -q --upgrade pip
 	$(PY) -m pip install -q -r requirements.txt
+
+data:
+	$(PY) -m sim.generate --seed $(SEED)
+
+eval:
+	$(PY) -m eval.run $(if $(SEEDS),--seeds $(SEEDS),)
+
+baseline:
+	$(PY) -m eval.run --mode baseline --seed $(SEED)
+
+demo: data eval
 
 test:
 	$(PY) -m pytest -q
@@ -25,13 +38,13 @@ test:
 verify-audit:
 	$(PY) -m rcp.audit $(SEED)
 
-clean:
-	rm -rf data/seed_$(SEED)
+scale:
+	$(PY) -m sim.generate --seed $(SEED) --scale 100000
 
-# ---------------------------------------------------------------------------
-# Not yet implemented. Each fails loudly rather than silently doing nothing,
-# so a reviewer following the README never sees a no-op success.
-# ---------------------------------------------------------------------------
-data baseline eval demo live sensitivity scale:
-	@echo "'$@' is not implemented yet -- sim/ and eval/ are the next milestone."
+clean:
+	rm -rf data/seed_* data/scale
+
+# Not yet implemented -- fail loudly rather than silently doing nothing.
+live sensitivity:
+	@echo "'$@' needs rcp/execute/razorpay_*.py and eval/sensitivity.py."
 	@exit 1

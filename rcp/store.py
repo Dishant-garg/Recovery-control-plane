@@ -211,6 +211,32 @@ def contact_count(
     ).fetchone()[0]
 
 
+def reserve_contact_in_txn(
+    conn: sqlite3.Connection,
+    action: dict[str, Any],
+    *,
+    window_start_ms: int,
+    cap: int,
+) -> str | Suppressed:
+    """Cap check plus slot claim, assuming a transaction is already open.
+
+    Split out from `reserve_contact` so a caller that must write a decision and
+    its action atomically (arbiter/select.py) can compose them into one
+    transaction rather than committing the decision and then discovering the
+    cap. Never call this outside an open IMMEDIATE transaction -- the cap
+    becomes advisory if the read and write are not serialized together.
+    """
+    observed = contact_count(conn, action["customer_id"], window_start_ms)
+    if observed >= cap:
+        return Suppressed(reason="contact_cap_reached", observed=observed, cap=cap)
+    action_id = insert_action_once(conn, action)
+    if action_id is None:
+        return Suppressed(
+            reason="duplicate_idempotency_key", detail=action["idempotency_key"]
+        )
+    return action_id
+
+
 def reserve_contact(
     conn: sqlite3.Connection,
     action: dict[str, Any],
@@ -218,25 +244,13 @@ def reserve_contact(
     window_start_ms: int,
     cap: int,
 ) -> str | Suppressed:
-    """Check the contact cap and claim a slot atomically.
-
-    The read and the write have to sit inside one IMMEDIATE transaction or the
-    cap is advisory. Returns the action id, or a Suppressed carrying the
-    observed numbers so the audit line explains itself.
-    """
+    """Standalone version: opens its own transaction. Returns the action id, or
+    a Suppressed carrying the observed numbers so the audit line explains
+    itself."""
     with write_txn(conn):
-        observed = contact_count(conn, action["customer_id"], window_start_ms)
-        if observed >= cap:
-            return Suppressed(
-                reason="contact_cap_reached", observed=observed, cap=cap
-            )
-        action_id = insert_action_once(conn, action)
-        if action_id is None:
-            return Suppressed(
-                reason="duplicate_idempotency_key",
-                detail=action["idempotency_key"],
-            )
-        return action_id
+        return reserve_contact_in_txn(
+            conn, action, window_start_ms=window_start_ms, cap=cap
+        )
 
 
 def claim_pending(

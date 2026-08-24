@@ -1,0 +1,40 @@
+# Arbiter weights. Read by rcp/arbiter/*.
+#
+# Everything here is platform-side: it is what the PLATFORM thinks an action is
+# worth, not what the proposer claimed. See ADR-004.
+
+version: v1
+
+calibration:
+  # Weight on observed history vs the proposer's own claim. 0.0 trusts the
+  # proposer completely; 1.0 ignores it. The blend is evidence-weighted, so a
+  # precedent tier with few trials pulls less than this ceiling suggests.
+  precedent_weight: 0.65
+
+  # Trials at which the precedent gets its full weight. Below this the blend
+  # shades back toward the proposer's claim rather than trusting 3 samples.
+  full_confidence_trials: 20
+
+contact_cap:
+  window_days: 7
+  max_contacts: 3
+
+# Suppress rather than act when the platform-side value does not clear this.
+# Zero means "act whenever it is not actively value-destroying".
+min_score_paise: 0
+
+# Marginal cost of one send. Moves to config/economics.yaml when
+# rcp/economics/unit_economics.py lands.
+channel_cost_paise:
+  retry: 200
+  sms: 1500
+  whatsapp: 3500
+  email: 300
+  voice: 12000
+
+# Contacting people costs goodwill. Without this term the arbiter would
+# happily spend a customer's lifetime value to recover one invoice.
+churn:
+  weight: 1.0
+  opt_out_base: 0.010
+  opt_out_per_extra_contact: 0.018
