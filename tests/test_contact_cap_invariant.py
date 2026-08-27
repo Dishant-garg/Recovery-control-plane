@@ -33,7 +33,8 @@ def test_cap_holds_across_1000_seeds(conn):
         customer = f"cust_seed_{seed}"
 
         conn.execute(
-            "INSERT INTO customers VALUES (?, 'cart', 5, 'en', 100000, 0, 0)",
+            f"INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, opted_out, created_at) "
+            "VALUES (?, 'cart', 5, 'en', 100000, 0, 0)",
             (customer,),
         )
 
@@ -119,7 +120,8 @@ def _fresh(db_path: Path) -> None:
     conn = connect(db_path)
     migrate(conn)
     make_chain(conn)
-    conn.execute("INSERT INTO customers VALUES ('cust_race', 'cart', 5, 'en', 1, 0, 0)")
+    conn.execute("INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, opted_out, created_at) "
+                 "VALUES ('cust_race', 'cart', 5, 'en', 1, 0, 0)")
     conn.close()
 
 

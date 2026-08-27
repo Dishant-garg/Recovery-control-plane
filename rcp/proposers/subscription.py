@@ -16,6 +16,8 @@ discounts them against what actually happened. See ADR-001 and ADR-004.
 
 from __future__ import annotations
 
+import json
+
 from rcp.proposers.base import ProposalContext, make_proposal
 from rcp.schema import Channel, Proposal, RootCause
 from rcp.timeutil import add_days, add_hours, day_start_ms, next_payday_ms
@@ -64,6 +66,7 @@ class SubscriptionProposer:
             return None
 
         channel, base_claim, why = PLAYBOOK[ctx.root_cause]
+        channel, why = self._permitted_channel(ctx, channel, why)
         scheduled_at, timing_note, timing_factor = self._schedule(ctx, channel)
 
         claim = base_claim * timing_factor * (RETRY_DECAY ** ctx.retry_index)
@@ -82,6 +85,27 @@ class SubscriptionProposer:
                 "needs_customer_action": ctx.root_cause in NEEDS_CUSTOMER_ACTION,
             },
         )
+
+    def _permitted_channel(
+        self, ctx: ProposalContext, channel: Channel, why: str
+    ) -> tuple[Channel, str]:
+        """Fall back to SMS where whatsapp has no recorded opt-in.
+
+        A proposer gets one bid per event. Spending it on a channel compliance
+        will refuse throws the whole event away -- the customer hears nothing at
+        all, when an SMS would have been permitted and useful. Consent is still
+        enforced by compliance/rules.py::Consent; this is the proposer being
+        realistic about what it can actually get, not a policy check. See ADR-005.
+        """
+        if channel is not Channel.WHATSAPP:
+            return channel, why
+        try:
+            consent = json.loads(ctx.customer.get("consent") or "{}")
+        except json.JSONDecodeError:
+            consent = {}
+        if consent.get("whatsapp") is True:
+            return channel, why
+        return Channel.SMS, f"{why} (sms: no whatsapp opt-in)"
 
     def _schedule(
         self, ctx: ProposalContext, channel: Channel

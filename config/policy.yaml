@@ -1,0 +1,51 @@
+# Compliance policy. Read by rcp/compliance/*.
+#
+# Versioned because every decision records which rules produced it
+# (decisions.policy_version). Changing a rule here without bumping the version
+# makes the audit log ambiguous about what was in force.
+
+version: policy-v1
+
+# The sim clock is UTC. Contact-hour rules are local. See rcp/timeutil.py.
+timezone_offset_minutes: 330      # IST, UTC+05:30
+
+quiet_hours:
+  start_hour: 21                  # 21:00 local
+  end_hour: 9                     # until 09:00 local
+  # A silent rail retry is not an intrusion, and neither is an inbox. Only
+  # things that make a phone buzz are restricted.
+  exempt_channels: [retry, email]
+  # Shift rather than deny -- a message worth sending at 10pm is still worth
+  # sending at 9am, and denying it discards real recovery value over timing.
+  action: shift
+
+# Ceilings on top of the global contact cap in config/scoring.yaml. A customer
+# can be within the overall cap and still be getting called too often.
+channel_sub_caps:
+  window_days: 7
+  max:
+    voice: 1
+    whatsapp: 2
+
+consent:
+  # Commercial contact on these channels requires recorded opt-in.
+  require_opt_in: [whatsapp, voice]
+  # Never overridable, by any rule or score.
+  honor_opt_out: true
+
+promise_to_pay:
+  # An accepted promise buys silence. Chasing someone who already committed to
+  # a date is how a recovery flow turns into harassment.
+  grace_days: 2
+  max_active: 1
+  broken_cooldown_days: 7
+
+incentive:
+  max_paise: 20000                # Rs 200 absolute ceiling
+  max_pct_of_amount: 15           # and never more than 15% of what is owed
+
+channel_eligibility:
+  # Retrying these fails identically every time -- it burns the rail and tells
+  # the customer nothing. subscription.py already declines to do it; this rule
+  # is what makes it a guarantee rather than good manners. See ADR-005.
+  deny_retry_for: [mandate_expired, card_expired, invalid_account]

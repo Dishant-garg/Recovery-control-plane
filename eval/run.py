@@ -46,7 +46,11 @@ from rcp.config import load
 from rcp.execute.outbox import drain
 from rcp.execute.simulated import SimulatedExecutor
 from rcp.migrations import migrate
+from rcp.compliance.promise import create as create_promise, transition
+from rcp.proposers.cart import CartProposer
+from rcp.proposers.receivables import ReceivablesProposer
 from rcp.proposers.subscription import SubscriptionProposer
+from rcp.schema import PromiseState
 from rcp.store import (
     DATA_DIR,
     close,
@@ -56,7 +60,7 @@ from rcp.store import (
     write_txn,
 )
 from rcp.timeutil import MS_PER_DAY, day_start_ms
-from sim.outcomes import load_latents, resolve
+from sim.outcomes import load_latents, promise_kept, resolve
 from sim.truth_store import open_truth
 
 # Days to keep running after the last event, so deferred retries land.
@@ -69,7 +73,7 @@ DEFAULT_SEEDS = tuple(range(42, 62))  # 20 seeds, ~11s end to end
 
 
 def control_plane_proposers() -> list:
-    return [SubscriptionProposer()]
+    return [SubscriptionProposer(), CartProposer(), ReceivablesProposer()]
 
 
 def covered_segments() -> tuple[str, ...]:
@@ -106,7 +110,7 @@ def resolve_outcomes(
     """Score every action that was sent but has no outcome yet."""
     rows = conn.execute(
         """
-        SELECT a.id, a.customer_id, a.channel, a.scheduled_at, a.sent_at,
+        SELECT a.id, a.customer_id, a.channel, a.scheduled_at, a.sent_at, a.body,
                d.event_id, e.root_cause, e.amount_paise, e.retry_index,
                c.payday_dom
         FROM actions a
@@ -144,6 +148,10 @@ def resolve_outcomes(
             propensity=latent["propensity"],
             opt_out_sensitivity=latent["opt_out_sensitivity"],
             contacts_before=contacts_before,
+            asks_for_promise=bool(
+                json.loads(row["body"]).get("asks_for_promise", False)
+            ),
+            incentive_paise=int(json.loads(row["body"]).get("incentive_paise", 0)),
         )
         resolved.append((row, outcome))
 
@@ -160,7 +168,39 @@ def resolve_outcomes(
                     "UPDATE customers SET opted_out = 1 WHERE id = ?",
                     (row["customer_id"],),
                 )
+            if outcome.promised:
+                create_promise(
+                    conn,
+                    customer_id=row["customer_id"],
+                    event_id=row["event_id"],
+                    amount_paise=row["amount_paise"],
+                    due_at=outcome.promise_due_at,
+                    now_ms=now_ms,
+                    state=PromiseState.ACCEPTED,
+                )
     return len(resolved)
+
+
+def settle_promises(
+    conn: sqlite3.Connection, cfg_outcomes: dict[str, Any], *, now_ms: int
+) -> dict[str, int]:
+    """Resolve promises whose due date has passed.
+
+    Without this an accepted promise silences its customer forever -- the most
+    expensive possible failure mode for a rule whose job is to protect them.
+    """
+    due = conn.execute(
+        "SELECT id FROM promises WHERE state = 'accepted' AND due_at < ? "
+        "ORDER BY id ASC",
+        (now_ms,),
+    ).fetchall()
+    tally = {"kept": 0, "broken": 0}
+    for row in due:
+        kept = promise_kept(cfg_outcomes, row["id"])
+        transition(conn, row["id"],
+                   PromiseState.KEPT if kept else PromiseState.BROKEN, now_ms=now_ms)
+        tally["kept" if kept else "broken"] += 1
+    return tally
 
 
 def run_mode(mode: str, seed: int) -> dict[str, Any]:
@@ -190,7 +230,9 @@ def run_mode(mode: str, seed: int) -> dict[str, Any]:
         guards = {}
 
     totals = {"selected": 0, "suppressed_value": 0, "suppressed_cap": 0,
-              "skipped": 0, "sent": 0, "resolved": 0}
+              "suppressed_compliance": 0, "compliance_modified": 0,
+              "skipped": 0, "sent": 0, "resolved": 0,
+              "promises_kept": 0, "promises_broken": 0}
 
     for day in range(horizon_days + TAIL_DAYS):
         start = day_start_ms(epoch_ms) + day * MS_PER_DAY
@@ -206,6 +248,9 @@ def run_mode(mode: str, seed: int) -> dict[str, Any]:
         relay = drain(conn, executor, now_ms=end)
         totals["sent"] += relay["sent"]
         totals["resolved"] += resolve_outcomes(conn, cfg_outcomes, latents, now_ms=end)
+        settled = settle_promises(conn, cfg_outcomes, now_ms=end)
+        totals["promises_kept"] += settled["kept"]
+        totals["promises_broken"] += settled["broken"]
 
     metrics = compute(conn, cfg_outcomes, latents, segments)
     metrics["pipeline"] = totals
@@ -233,6 +278,9 @@ ROWS = [
     ("recovery rate", "recovery_rate", lambda v: f"{v:.1%}"),
     ("contacts / customer", "contacts_per_customer", lambda v: f"{v:.2f}"),
     ("recovered", "recovered_paise", _rupees),
+    ("promises secured", "promises_secured", lambda v: f"{v:,.1f}"),
+    ("promises kept", "promises_kept", lambda v: f"{v:,.1f}"),
+    ("recovered via promise", "promised_recovered_paise", _rupees),
     ("send spend", "spend_paise", _rupees),
     ("net value ex-churn", "net_value_ex_churn_paise", _rupees),
     ("opt-outs", "opt_outs", lambda v: f"{v:,.1f}"),
@@ -240,6 +288,8 @@ ROWS = [
     ("net value", "net_value_paise", _rupees),
     ("suppressed (value)", "suppressed_value", lambda v: f"{v:,.1f}"),
     ("suppressed (cap)", "suppressed_cap", lambda v: f"{v:,.1f}"),
+    ("suppressed (compliance)", "compliance_denied_count", lambda v: f"{v:,.1f}"),
+    ("compliance cost", "compliance_cost_paise", _rupees),
     ("false suppressions", "false_suppression_count", lambda v: f"{v:,.1f}"),
     ("false suppression cost", "false_suppression_paise", _rupees),
 ]

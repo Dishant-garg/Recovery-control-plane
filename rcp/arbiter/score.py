@@ -21,6 +21,7 @@ from typing import Any
 
 from rcp.arbiter.calibration import Calibrated, calibrate
 from rcp.config import load
+from rcp.precedent import observed_opt_out_rate
 from rcp.schema import Channel
 
 
@@ -64,7 +65,9 @@ class Scored:
         }
 
 
-def opt_out_risk(contacts_so_far: int, channel: str) -> float:
+def opt_out_risk(
+    contacts_so_far: int, channel: str, conn: sqlite3.Connection | None = None
+) -> float:
     """Probability this contact tips the customer into opting out.
 
     Rises with each additional contact in the window: the first message is
@@ -78,10 +81,14 @@ def opt_out_risk(contacts_so_far: int, channel: str) -> float:
     """
     if channel == Channel.RETRY.value:
         return 0.0
+
     churn = load("scoring")["churn"]
-    return float(churn["opt_out_base"]) + (
-        max(0, contacts_so_far) * float(churn["opt_out_per_extra_contact"])
-    )
+    base = float(churn["opt_out_base"])
+    if conn is not None:
+        # Learn the level from history; keep the per-contact slope as a prior,
+        # since `outcomes` does not record how many contacts preceded each send.
+        base, _, _ = observed_opt_out_rate(conn, prior=base)
+    return base + max(0, contacts_so_far) * float(churn["opt_out_per_extra_contact"])
 
 
 def score_proposal(
@@ -108,9 +115,10 @@ def score_proposal(
     channel_cost = int(cfg["channel_cost_paise"][channel])
     incentive = int(proposal["incentive_paise"])
     churn_cost = int(
-        opt_out_risk(contacts_so_far, channel)
+        opt_out_risk(contacts_so_far, channel, conn)
         * int(customer["ltv_paise"])
         * float(cfg["churn"]["weight"])
+        * float(cfg["churn"].get("ltv_fraction", 1.0))
     )
 
     return Scored(

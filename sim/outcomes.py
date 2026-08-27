@@ -38,12 +38,26 @@ def _draw(*parts: Any) -> float:
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
 
 
+def incentive_lift(cfg: dict[str, Any], incentive_paise: int, amount_paise: int) -> float:
+    """How much a discount raises conversion, as a multiplier."""
+    if incentive_paise <= 0 or amount_paise <= 0:
+        return 1.0
+    pct = 100.0 * incentive_paise / amount_paise
+    return min(
+        float(cfg.get("max_incentive_lift", 1.35)),
+        1.0 + pct * float(cfg.get("incentive_lift_per_pct", 0.018)),
+    )
+
+
 @dataclass(frozen=True)
 class Resolution:
     succeeded: int
     recovered_paise: int
     opted_out: int
     probability: float
+    # A contact that did not collect can still secure a commitment to a date.
+    promised: int = 0
+    promise_due_at: int | None = None
 
 
 def success_probability(
@@ -55,6 +69,8 @@ def success_probability(
     payday_dom: int | None,
     retry_index: int,
     propensity: float,
+    incentive_paise: int = 0,
+    amount_paise: int = 0,
 ) -> float:
     """What this attempt is actually worth, timing included.
 
@@ -74,6 +90,7 @@ def success_probability(
     timing = float(cfg["payday_multiplier"][phase])
 
     p = base * channel_eff * timing * propensity * (RETRY_DECAY ** retry_index)
+    p *= incentive_lift(cfg, incentive_paise, amount_paise)
     return max(0.0, min(MAX_SUCCESS_PROB, p))
 
 
@@ -90,6 +107,8 @@ def resolve(
     propensity: float,
     opt_out_sensitivity: float,
     contacts_before: int,
+    asks_for_promise: bool = False,
+    incentive_paise: int = 0,
 ) -> Resolution:
     p = success_probability(
         cfg,
@@ -99,6 +118,8 @@ def resolve(
         payday_dom=payday_dom,
         retry_index=retry_index,
         propensity=propensity,
+        incentive_paise=incentive_paise,
+        amount_paise=amount_paise,
     )
     succeeded = int(_draw(action_id, "success") < p)
 
@@ -112,12 +133,34 @@ def resolve(
         ) * opt_out_sensitivity
         opted_out = int(_draw(action_id, "optout") < p_opt)
 
+    # A contact that failed to collect can still secure a date. Only asked for
+    # where the proposer asked -- an SMS reminder does not negotiate terms.
+    promised, due_at = 0, None
+    if asks_for_promise and not succeeded and not opted_out:
+        promise_cfg = cfg["promise"]
+        if _draw(action_id, "promise") < float(promise_cfg["accept_rate"]):
+            lo = int(promise_cfg["min_horizon_days"])
+            hi = int(promise_cfg["max_horizon_days"])
+            days = lo + int(_draw(action_id, "promise_horizon") * (hi - lo + 1))
+            promised, due_at = 1, scheduled_at + min(days, hi) * 86_400_000
+
     return Resolution(
         succeeded=succeeded,
-        recovered_paise=amount_paise if succeeded else 0,
+        recovered_paise=max(0, amount_paise - incentive_paise) if succeeded else 0,
         opted_out=opted_out,
         probability=round(p, 6),
+        promised=promised,
+        promise_due_at=due_at,
     )
+
+
+def promise_kept(cfg: dict[str, Any], promise_id: str) -> bool:
+    """Whether an accepted promise is actually honoured.
+
+    Keyed on the promise id so the answer is fixed the moment the promise
+    exists, independent of when the settlement sweep happens to run.
+    """
+    return _draw(promise_id, "kept") < float(cfg["promise"]["kept_rate"])
 
 
 def load_latents(truth: sqlite3.Connection) -> dict[str, dict[str, Any]]:

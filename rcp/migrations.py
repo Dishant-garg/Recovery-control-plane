@@ -242,7 +242,16 @@ JOIN events  e ON e.id = o.event_id;
 """
 
 
-MIGRATIONS: list[str] = [SCHEMA_V1]
+# Recorded consent, per channel: {"whatsapp": true, "voice": false}.
+# `opted_out` is a blanket stop; this is the narrower "may we use this channel
+# at all" question that compliance/rules.py::Consent asks. Absent key means no
+# recorded consent, which is a denial rather than a default-yes.
+SCHEMA_V2 = """
+ALTER TABLE customers ADD COLUMN consent TEXT NOT NULL DEFAULT '{}';
+"""
+
+
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2]
 
 
 def migrate(conn: sqlite3.Connection) -> int:

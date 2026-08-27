@@ -40,8 +40,9 @@ def make_customer(conn: sqlite3.Connection, cid: str = "cust_1", **kw: Any) -> s
     }
     row.update(kw)
     conn.execute(
-        "INSERT INTO customers VALUES (:id, :segment, :payday_dom, :language, "
-        ":ltv_paise, :opted_out, :created_at) ON CONFLICT DO NOTHING",
+        "INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, opted_out, created_at) "
+        "VALUES (:id, :segment, :payday_dom, :language, :ltv_paise, :opted_out, "
+        ":created_at) ON CONFLICT DO NOTHING",
         row,
     )
     return cid

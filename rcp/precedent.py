@@ -50,6 +50,34 @@ def _tally(
     return int(row["s"]), int(row["n"])
 
 
+def observed_opt_out_rate(
+    conn: sqlite3.Connection, *, prior: float, full_confidence_trials: int = 200
+) -> tuple[float, int, int]:
+    """Opt-out rate learned from what actually happened.
+
+    The system already learns success probability from its own outcomes; there
+    is no principled reason for opt-out risk to stay a hardcoded guess. A guess
+    that runs 1.7x high does not fail loudly -- it just suppresses actions that
+    were worth taking, and the resulting restraint looks like good judgement.
+
+    Rail retries are excluded: the customer never sees them, so they belong in
+    neither the numerator nor the denominator.
+
+    Returns (rate, opt_outs, sends). Blends toward `prior` while evidence is
+    thin, so early windows are not driven by three observations.
+    """
+    row = conn.execute(
+        "SELECT count(*) AS n, COALESCE(SUM(o.opted_out), 0) AS k "
+        "FROM outcomes o JOIN actions a ON a.id = o.action_id "
+        "WHERE a.channel <> 'retry'"
+    ).fetchone()
+    sends, opt_outs = int(row["n"]), int(row["k"])
+
+    posterior = (opt_outs + ALPHA) / (sends + ALPHA + BETA)
+    confidence = min(1.0, sends / full_confidence_trials) if full_confidence_trials else 1.0
+    return (1 - confidence) * prior + confidence * posterior, opt_outs, sends
+
+
 def lookup(
     conn: sqlite3.Connection,
     *,

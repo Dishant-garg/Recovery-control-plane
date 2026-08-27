@@ -27,13 +27,31 @@ languages:
 
 payday_dom: [1, 5, 7, 10, 15, 25, 30]
 
+# Recorded opt-in, per channel. Absent consent is a denial, not a default-yes,
+# so these rates directly determine how often compliance refuses a whatsapp or
+# voice proposal.
+consent_rates:
+  whatsapp: 0.55
+  voice: 0.30
+
 amount_paise:
   min: 20000        # Rs 200
   max: 1500000      # Rs 15,000
 
+# Lifetime value differs enormously by segment, and treating it as one
+# distribution was wrong: it gave a one-off cart shopper the same churn cost as
+# a multi-year subscriber, which made almost every cart action look
+# value-destroying.
 ltv_paise:
-  min: 100000       # Rs 1,000
-  max: 20000000     # Rs 2,00,000
+  cart:                       # a single checkout, no relationship yet
+    min: 50000                # Rs 500
+    max: 1500000              # Rs 15,000
+  subscription:               # recurring revenue, worth protecting
+    min: 500000               # Rs 5,000
+    max: 20000000             # Rs 2,00,000
+  receivables:                # B2B account, the largest of the three
+    min: 2000000              # Rs 20,000
+    max: 50000000             # Rs 5,00,000
 
 # Retry attempt distribution -- most failures are first attempts.
 retry_index_weights: [0.62, 0.24, 0.10, 0.04]
@@ -146,3 +164,18 @@ outcomes:
   propensity:
     min: 0.55
     max: 1.35
+
+  # A discount genuinely moves conversion. Without this the outcome model
+  # ignores incentives, which makes every rupee offered pure cost and the
+  # incentive ceiling a rule with nothing real to constrain.
+  incentive_lift_per_pct: 0.018   # relative lift per 1% of the amount discounted
+  max_incentive_lift: 1.35
+
+  # Promise-to-pay. A receivables contact that does not collect immediately can
+  # still secure a commitment to a date, which is worth more than another
+  # unanswered reminder -- it converts an unknown into a scheduled receivable.
+  promise:
+    accept_rate: 0.34        # of promise-seeking contacts that did not collect
+    min_horizon_days: 3
+    max_horizon_days: 14
+    kept_rate: 0.63          # of accepted promises actually honoured

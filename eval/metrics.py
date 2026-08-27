@@ -99,8 +99,63 @@ def false_suppression(
             payday_dom=row["payday_dom"],
             retry_index=row["retry_index"],
             propensity=latent["propensity"],
+            incentive_paise=int(best.get("incentive_paise", 0)),
+            amount_paise=int(row["amount_paise"]),
         )
         if _draw(f"cf_{row['id']}", "success") < p:
+            count += 1
+            value += int(row["amount_paise"])
+
+    return count, value
+
+
+def compliance_cost(
+    conn: sqlite3.Connection,
+    cfg_outcomes: dict[str, Any],
+    latents: dict[str, dict[str, Any]],
+    segments: tuple[str, ...] | None,
+) -> tuple[int, int]:
+    """What the compliance rules cost, in rupees.
+
+    Only counts decisions the rules suppressed OUTRIGHT. A proposal denied for
+    lack of whatsapp consent costs nothing if an SMS from another proposer ran
+    in its place -- the rule redirected the action rather than preventing it.
+    Counting every denial would inflate this number and make compliance look
+    far more expensive than it is.
+
+    Returns (count, paise that would have been recovered).
+    """
+    count = value = 0
+    clause, params = _seg(segments)
+    rows = conn.execute(
+        "SELECT d.id AS id, d.detail AS detail, e.root_cause AS root_cause, "
+        "       e.amount_paise AS amount_paise, e.retry_index AS retry_index, "
+        "       c.payday_dom AS payday_dom, c.id AS customer_id "
+        "FROM decisions d "
+        "JOIN events    e ON e.id = d.event_id "
+        "JOIN customers c ON c.id = d.customer_id "
+        f"WHERE d.outcome = 'suppressed' AND d.reason LIKE 'compliance:%'{clause} "
+        "ORDER BY d.id ASC",
+        params,
+    ).fetchall()
+
+    for row in rows:
+        denied = ((json.loads(row["detail"]) or {}).get("compliance") or {}).get("denied") or []
+        latent = latents.get(row["customer_id"])
+        if not denied or latent is None:
+            continue
+        best = denied[0]
+        p = success_probability(
+            cfg_outcomes,
+            root_cause=row["root_cause"],
+            channel=best["channel"],
+            scheduled_at=int(best["scheduled_at"]),
+            payday_dom=row["payday_dom"],
+            retry_index=row["retry_index"],
+            propensity=latent["propensity"],
+            amount_paise=int(row["amount_paise"]),
+        )
+        if _draw(f"cc_{row['id']}", "success") < p:
             count += 1
             value += int(row["amount_paise"])
 
@@ -114,6 +169,7 @@ def compute(
     segments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     clause, params = _seg(segments)
+    ltv_fraction = float(load("scoring")["churn"].get("ltv_fraction", 1.0))
 
     def one(sql: str, extra: list | None = None) -> int:
         return conn.execute(sql, (extra if extra is not None else params)).fetchone()[0]
@@ -140,7 +196,7 @@ def compute(
     recovered_paise = one(f"SELECT COALESCE(SUM(o.recovered_paise), 0) {joined}")
     opt_outs = one(f"SELECT COALESCE(SUM(o.opted_out), 0) {joined}")
     churn_cost = one(
-        "SELECT COALESCE(SUM(c.ltv_paise), 0) "
+        f"SELECT CAST(COALESCE(SUM(c.ltv_paise), 0) * {ltv_fraction} AS INT) "
         "FROM outcomes o "
         "JOIN actions   a ON a.id = o.action_id "
         "JOIN decisions d ON d.id = a.decision_id "
@@ -151,6 +207,20 @@ def compute(
 
     send_spend = spend(conn, segments)
     fs_count, fs_paise = false_suppression(conn, cfg_outcomes, latents, segments)
+    cc_count, cc_paise = compliance_cost(conn, cfg_outcomes, latents, segments)
+
+    promises_secured = one(
+        "SELECT count(*) FROM promises p JOIN events e ON e.id = p.event_id "
+        f"WHERE 1 = 1{clause}"
+    )
+    promises_kept = one(
+        "SELECT count(*) FROM promises p JOIN events e ON e.id = p.event_id "
+        f"WHERE p.state = 'kept'{clause}"
+    )
+    promised_recovered = one(
+        "SELECT COALESCE(SUM(p.amount_paise), 0) FROM promises p "
+        f"JOIN events e ON e.id = p.event_id WHERE p.state = 'kept'{clause}"
+    )
     customers_touched = one(
         "SELECT count(DISTINCT a.customer_id) FROM actions a "
         "JOIN decisions d ON d.id = a.decision_id "
@@ -173,8 +243,22 @@ def compute(
         "spend_paise": send_spend,
         "opt_outs": opt_outs,
         "churn_cost_paise": churn_cost,
-        "net_value_paise": recovered_paise - send_spend - churn_cost,
-        "net_value_ex_churn_paise": recovered_paise - send_spend,
+        "promises_secured": promises_secured,
+        "promises_kept": promises_kept,
+        "promised_recovered_paise": promised_recovered,
+        "compliance_denied_count": one(
+            "SELECT count(*) FROM decisions d JOIN events e ON e.id = d.event_id "
+            f"WHERE d.outcome = 'suppressed' AND d.reason LIKE 'compliance:%'{clause}"
+        ),
+        "compliance_cost_count": cc_count,
+        "compliance_cost_paise": cc_paise,
+        # A promise honoured is money in the bank, so it belongs in net value.
+        "net_value_paise": (
+            recovered_paise + promised_recovered - send_spend - churn_cost
+        ),
+        "net_value_ex_churn_paise": (
+            recovered_paise + promised_recovered - send_spend
+        ),
         "suppressed_value": one(
             "SELECT count(*) FROM decisions d "
             "JOIN events e ON e.id = d.event_id "

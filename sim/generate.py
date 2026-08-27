@@ -128,15 +128,25 @@ def generate(seed: int = 42, n_events: int | None = None, quiet: bool = False) -
             "segment": _weighted(rng, cfg["segments"]),
             "payday_dom": rng.choice(cfg["payday_dom"]),
             "language": _weighted(rng, cfg["languages"]),
-            "ltv_paise": rng.randint(cfg["ltv_paise"]["min"], cfg["ltv_paise"]["max"]),
+            "ltv_paise": 0,   # filled below, once the segment is known
             "opted_out": 0,
             "created_at": epoch_ms,
+            # Recorded opt-in per channel. compliance/rules.py::Consent treats
+            # an absent key as a denial, so this is what gates whatsapp/voice.
+            "consent": canonical_json({
+                ch: rng.random() < rate
+                for ch, rate in sorted(cfg["consent_rates"].items())
+            }),
         })
+        ltv = cfg["ltv_paise"][customers[-1]["segment"]]
+        customers[-1]["ltv_paise"] = rng.randint(ltv["min"], ltv["max"])
 
     with write_txn(conn):
         conn.executemany(
-            "INSERT INTO customers VALUES (:id, :segment, :payday_dom, :language, "
-            ":ltv_paise, :opted_out, :created_at)",
+            "INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, "
+            "opted_out, created_at, consent) "
+            "VALUES (:id, :segment, :payday_dom, :language, :ltv_paise, "
+            ":opted_out, :created_at, :consent)",
             customers,
         )
 

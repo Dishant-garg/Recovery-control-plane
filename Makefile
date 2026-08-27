@@ -13,6 +13,7 @@ help:
 	@echo "  make demo          data + eval"
 	@echo "  make test          full invariant suite"
 	@echo "  make verify-audit  recompute the audit hash chain (exit 1 on tamper)"
+	@echo "  make sensitivity   break-even on the churn assumption"
 	@echo "  make scale         100k-event stress run for docs/SCALE.md"
 	@echo "  make clean         drop generated data"
 
@@ -44,7 +45,10 @@ scale:
 clean:
 	rm -rf data/seed_* data/scale
 
+sensitivity:
+	$(PY) -m eval.sensitivity
+
 # Not yet implemented -- fail loudly rather than silently doing nothing.
-live sensitivity:
-	@echo "'$@' needs rcp/execute/razorpay_*.py and eval/sensitivity.py."
+live:
+	@echo "'$@' needs rcp/execute/razorpay_rest.py and test-mode API keys."
 	@exit 1

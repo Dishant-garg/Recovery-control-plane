@@ -45,14 +45,16 @@ def test_read_only_connection_refuses_writes(db_path):
     try:
         assert ro.execute("PRAGMA query_only").fetchone()[0] == 1
         with pytest.raises(Exception):
-            ro.execute("INSERT INTO customers VALUES ('c','cart',1,'en',1,0,1)")
+            ro.execute("INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, opted_out, created_at) "
+                       "VALUES ('c','cart',1,'en',1,0,1)")
     finally:
         ro.close()
 
 
 def test_strict_tables_reject_wrong_types(conn):
     with pytest.raises(Exception, match="cannot store"):
-        conn.execute("INSERT INTO customers VALUES ('c','cart',1,'en','oops',0,1)")
+        conn.execute("INSERT INTO customers (id, segment, payday_dom, language, ltv_paise, opted_out, created_at) "
+                     "VALUES ('c','cart',1,'en','oops',0,1)")
 
 
 def test_foreign_keys_are_enforced(conn):

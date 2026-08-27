@@ -18,6 +18,11 @@ from datetime import date, datetime, timezone
 MS_PER_DAY = 86_400_000
 MS_PER_HOUR = 3_600_000
 
+# The sim clock is UTC; contact-hour rules are local. A 9pm-9am quiet window in
+# India is not the same ten hours in UTC, and getting this wrong guards the
+# wrong part of the day without failing anything.
+IST_OFFSET_MS = 330 * 60 * 1000  # UTC+05:30
+
 
 def to_utc(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
@@ -47,6 +52,45 @@ def hour_of_day(ms: int) -> int:
 
 def day_of_month(ms: int) -> int:
     return to_utc(ms).day
+
+
+def local_hour(ms: int, offset_ms: int = IST_OFFSET_MS) -> int:
+    """Hour of day in the customer's timezone, 0-23."""
+    return int(((ms + offset_ms) % MS_PER_DAY) // MS_PER_HOUR)
+
+
+def in_quiet_hours(
+    ms: int, *, start_hour: int, end_hour: int, offset_ms: int = IST_OFFSET_MS
+) -> bool:
+    """Is this instant inside a window that wraps midnight (e.g. 21:00-09:00)?"""
+    hour = local_hour(ms, offset_ms)
+    if start_hour == end_hour:
+        return False
+    if start_hour < end_hour:          # a same-day window, e.g. 01:00-06:00
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
+
+
+def shift_out_of_quiet_hours(
+    ms: int, *, start_hour: int, end_hour: int, offset_ms: int = IST_OFFSET_MS
+) -> int:
+    """Move an instant forward to the first moment the window allows.
+
+    Returns `ms` unchanged when it is already allowed. Deliberately a *shift*
+    rather than a denial: a message that would have gone out at 10pm is still
+    worth sending at 9am, and denying it would throw away real recovery value
+    to satisfy a timing rule.
+    """
+    if not in_quiet_hours(ms, start_hour=start_hour, end_hour=end_hour,
+                          offset_ms=offset_ms):
+        return ms
+
+    local = ms + offset_ms
+    local_midnight = (local // MS_PER_DAY) * MS_PER_DAY
+    target = local_midnight + end_hour * MS_PER_HOUR
+    if target <= local:
+        target += MS_PER_DAY          # past today's opening; wait for tomorrow's
+    return target - offset_ms
 
 
 def _payday_in_month(year: int, month: int, dom: int) -> date:

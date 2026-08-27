@@ -36,5 +36,12 @@ channel_cost_paise:
 # happily spend a customer's lifetime value to recover one invoice.
 churn:
   weight: 1.0
+  # What one opt-out actually costs, as a share of the customer's lifetime
+  # value. 1.0 says opting out of recovery messages means losing the customer
+  # outright -- the harshest assumption available, and the one most flattering
+  # to a policy whose main edge is restraint. Exposed here rather than
+  # hardcoded because the honest answer is a break-even, not a number:
+  # `make sensitivity` sweeps it.
+  ltv_fraction: 1.0
   opt_out_base: 0.010
   opt_out_per_extra_contact: 0.018

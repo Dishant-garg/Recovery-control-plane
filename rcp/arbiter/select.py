@@ -14,11 +14,13 @@ halves are composed here directly, inside one IMMEDIATE transaction.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
 from rcp.arbiter.score import Scored, rank, score_proposal
 from rcp.audit import AuditLog
+from rcp.compliance.engine import evaluate, policy_version as policy_version_from_config
 from rcp.config import load
 from rcp.schema import ActionStatus, DecisionOutcome
 from rcp.store import (
@@ -110,12 +112,15 @@ def select_window(
     min_score = (
         int(cfg["min_score_paise"]) if min_score_paise is None else min_score_paise
     )
-    policy_version = policy_version or str(cfg["version"])
+    # Stamped from policy.yaml, not scoring.yaml -- the version that matters for
+    # replay is which RULES were in force, not which weights.
+    policy_version = policy_version or policy_version_from_config()
 
     grouped = _proposals_by_event(conn, window_id)
     already = _existing_decisions(conn, window_id)
 
-    stats = {"selected": 0, "suppressed_value": 0, "suppressed_cap": 0, "skipped": 0}
+    stats = {"selected": 0, "suppressed_value": 0, "suppressed_cap": 0,
+             "suppressed_compliance": 0, "compliance_modified": 0, "skipped": 0}
 
     for event_id in sorted(grouped):
         if event_id in already:
@@ -132,15 +137,42 @@ def select_window(
         window_start = now_ms - cap_window_ms
         contacts_so_far = contact_count(conn, customer["id"], window_start)
 
+        # Compliance runs BEFORE scoring. A quiet-hours shift can move an action
+        # into a different payday phase, which changes what it is worth --
+        # scoring first would value a plan that is not going to be executed.
+        permitted, refused = [], []
+        for proposal in grouped[event_id]:
+            verdict = evaluate(conn, proposal, event, customer, now_ms=now_ms)
+            if verdict.allowed:
+                permitted.append((verdict.proposal, verdict))
+            else:
+                refused.append({
+                    "proposal_id": proposal["id"],
+                    "proposer_id": proposal["proposer_id"],
+                    "channel": proposal["channel"],
+                    "scheduled_at": proposal["scheduled_at"],
+                    "denied_by": verdict.denied_by,
+                    "reason": verdict.reason,
+                    "trail": verdict.trail,
+                })
+
+        by_id = {p["id"]: v for p, v in permitted}
         ranked = rank([
             score_proposal(conn, p, event, customer, contacts_so_far=contacts_so_far)
-            for p in grouped[event_id]
+            for p, _ in permitted
         ])
         best = ranked[0] if ranked else None
         detail = {
             "contacts_so_far": contacts_so_far,
             "cap": cap,
             "min_score_paise": min_score,
+            "compliance": {
+                "denied": refused,
+                "applied": [
+                    {"proposal_id": pid, "modifications": v.modifications}
+                    for pid, v in by_id.items() if v.modified
+                ],
+            },
             "considered": [s.to_audit() for s in ranked],
         }
         decision_id = content_id("dec", window_id, event_id)
@@ -151,7 +183,20 @@ def select_window(
             # Authoritative cap read, inside the same transaction as the write.
             observed = contact_count(conn, customer["id"], window_start)
 
-            if best is None or best.score_paise <= min_score:
+            if best is None and refused:
+                # Every proposal was refused. This is a compliance outcome, not
+                # a valuation one, and conflating the two would hide the rules
+                # behind an economic-sounding reason.
+                _write_decision(
+                    conn, decision_id=decision_id, window_id=window_id, event=event,
+                    winner=None, outcome=DecisionOutcome.SUPPRESSED,
+                    reason=f"compliance: denied by {refused[0]['denied_by']} "
+                           f"({refused[0]['reason']})",
+                    policy_version=policy_version, now_ms=now_ms, detail=detail,
+                )
+                stats["suppressed_compliance"] += 1
+
+            elif best is None or best.score_paise <= min_score:
                 reason = (
                     "no proposals" if best is None else
                     f"negative platform value: best score {best.score_paise} paise "
@@ -196,16 +241,23 @@ def select_window(
                     "sent_at": None,
                     "attempts": 0,
                     "provider_ref": None,
+                    # The proposer's payload rides along: it is what tells the
+                    # executor and the outcome model what this action actually
+                    # asks for (a promise-to-pay, an incentive, a retry).
                     "body": canonical_json({
+                        **json.loads(best.proposal["payload"] or "{}"),
                         "channel": best.proposal["channel"],
                         "root_cause": event["root_cause"],
                         "amount_paise": event["amount_paise"],
                         "language": customer["language"],
+                        "incentive_paise": best.proposal["incentive_paise"],
                         "rationale": best.proposal["rationale"],
                     }),
                     "created_at": now_ms,
                 })
                 stats["selected"] += 1
+                if by_id[best.proposal_id].modified:
+                    stats["compliance_modified"] += 1
                 taken = "selected"
 
         if log is not None:
