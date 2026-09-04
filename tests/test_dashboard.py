@@ -345,14 +345,25 @@ def _case_with_a_live_rung(seed):
     return None
 
 
-def test_the_agent_route_runs_and_reports_which_path_it_took(client, seed):
+def test_the_agent_route_runs_and_reports_which_path_it_took(
+    client, seed, monkeypatch
+):
+    """Pins the provider rather than assuming none is configured.
+
+    `app/main.py` loads .env so the dashboard can actually run an agent, which
+    means a developer with a key in .env would otherwise have this test make a
+    live call and fail on `was_live`. The behaviour under test is the shape of
+    the response and the trail, not whose key happens to be present.
+    """
+    monkeypatch.setenv("RCP_LLM", "fallback")
+
     case_id = _case_with_a_live_rung(seed)
     if case_id is None:
         pytest.skip("no case with a live ladder rung in this run")
 
     body = client.post("/api/agent/decide", json={"case_id": case_id}).json()
     assert body["move"]["action"] in {"escalate", "hold", "stop"}
-    assert body["was_live"] is False, "no provider is configured in tests"
+    assert body["was_live"] is False, "RCP_LLM was pinned to fallback"
 
     # The compliance verdict is the point of the trail; a call without its
     # answer is unreadable.

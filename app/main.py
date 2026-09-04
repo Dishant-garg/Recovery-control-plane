@@ -597,8 +597,19 @@ async def agent_decide(request: Request):
     global _agent_runs
 
     from rcp.agents.recovery import RecoveryAgent
+    from rcp.env import load_dotenv
     from rcp.escalation import channel_at, next_rung
     from rcp.precedent import lookup
+
+    # Loaded here rather than at import. Without it the "run the agent" button
+    # reported the deterministic path forever with a working key sitting in
+    # .env -- a failure indistinguishable from the feature working as designed.
+    #
+    # At import it would be worse: `load_dotenv` writes os.environ directly, so
+    # importing this module for a route test set RCP_LLM for the whole pytest
+    # process and three unrelated tests started reaching for a provider.
+    # `override=False` also means an explicitly set RCP_LLM still wins.
+    load_dotenv()
 
     try:
         body = await request.json()

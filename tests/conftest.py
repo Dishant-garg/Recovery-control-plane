@@ -7,11 +7,32 @@ what most of these tests are checking.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_environment():
+    """Undo any environment a test mutates, for every test in the suite.
+
+    `rcp.env.load_dotenv` writes `os.environ` directly, and monkeypatch cannot
+    undo that. It has bitten twice: first when the env tests leaked
+    `RCP_LLM=groq` into every later test that built an adapter, and again when
+    the dashboard's agent route started loading .env and three unrelated tests
+    began reaching for a live provider.
+
+    Autouse and wholesale, because the leak never comes from the test that
+    breaks -- so protecting only the tests that knowingly touch the environment
+    is protecting the wrong ones.
+    """
+    snapshot = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(snapshot)
 
 from rcp.store import canonical_json, close, connect, content_id, write_txn
 from rcp.migrations import migrate
