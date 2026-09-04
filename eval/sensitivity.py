@@ -27,6 +27,7 @@ from typing import Any
 
 from eval.run import DEFAULT_SEEDS, run_mode
 from rcp.config import CONFIG_DIR, load
+from rcp.env import load_dotenv
 from rcp.store import DATA_DIR, rcp_db_path
 from sim.generate import generate
 
@@ -138,6 +139,7 @@ def report(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="churn-assumption break-even")
     parser.add_argument("--seeds", type=str, default=None)
     args = parser.parse_args()

@@ -30,6 +30,15 @@ PROPOSER_ID = "receivables"
 # Above this, a human voice is worth the cost and the sub-cap slot.
 VOICE_THRESHOLD_PAISE = 500_000  # Rs 5,000
 
+# Causes the rail can clear without anyone being contacted. Found by the eval
+# analyst (eval/analyst.py), which noticed the baseline recovering 22.4% on
+# retries at Rs 2/send while this proposer spent Rs 120/send on voice to
+# recover 16.0%. The same omission had already cost the cart proposer 21.8%.
+RAIL_FIXABLE = {
+    RootCause.INSUFFICIENT_FUNDS.value,
+    RootCause.BANK_DOWNTIME.value,
+}
+
 # Invoices are slower and less certain than either other segment, but the
 # balances are larger, so a modest probability still carries real value.
 BASE_CLAIM = {
@@ -61,7 +70,7 @@ class ReceivablesProposer:
         if ctx.customer["opted_out"]:
             return None
 
-        channel = self._channel(ctx)
+        channel = ctx.assigned(self._channel(ctx))
         asks_for_promise = channel in (Channel.VOICE, Channel.EMAIL)
 
         claim = BASE_CLAIM[ctx.root_cause] * (RETRY_DECAY ** ctx.retry_index)
@@ -97,6 +106,16 @@ class ReceivablesProposer:
         )
 
     def _channel(self, ctx: ProposalContext) -> Channel:
+        """Rail first where the rail can clear it, then voice, then email.
+
+        A retry costs Rs 2 against Rs 120 for a call, is invisible to the
+        customer, and on this data clears a higher share of the causes it can
+        address. Chasing a company by phone over a decline their own bank would
+        clear on the next attempt spends a scarce sub-cap slot for nothing.
+        """
+        if ctx.root_cause in RAIL_FIXABLE:
+            return Channel.RETRY
+
         try:
             consent = json.loads(ctx.customer.get("consent") or "{}")
         except json.JSONDecodeError:

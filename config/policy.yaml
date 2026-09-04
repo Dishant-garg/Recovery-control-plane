@@ -44,6 +44,47 @@ incentive:
   max_paise: 20000                # Rs 200 absolute ceiling
   max_pct_of_amount: 15           # and never more than 15% of what is owed
 
+# --- escalation ------------------------------------------------------------
+# The ladder owns channel order, and that is what makes escalation *compliant*
+# rather than ad hoc. A proposer picking whatever channel it liked each time
+# could reach for voice on the first attempt; a ladder cannot. Cheapest and
+# least intrusive first, so the expensive and intrusive rungs are only reached
+# by a case that has genuinely earned them. See ADR-008.
+escalation:
+  ladder:
+    subscription: [retry, sms, whatsapp, voice]
+    cart:         [retry, retry, sms, whatsapp]
+    receivables:  [retry, email, voice]
+
+  # Minimum gap between rungs. Escalating a customer twice in one day is how a
+  # recovery flow becomes harassment regardless of what the contact cap allows.
+  cooldown_days: 3
+
+  # A retry is silent, so it does not need the same breathing room as a message.
+  retry_cooldown_days: 1
+
+# --- stopping rules --------------------------------------------------------
+# Knowing when to give up is half of what separates recovery from harassment,
+# and it is the half nobody builds. Every rule here closes a case with a written
+# reason (see cases.close), so "why did we stop chasing this" is answerable.
+stopping:
+  max_attempts: 4
+
+  # Below this expected value, the case is written off rather than chased. The
+  # arbiter's per-action floor asks "is this action worth it"; this asks the
+  # bigger question, "is this case worth anyone's time at all".
+  min_expected_value_paise: 2000        # Rs 20
+
+  # Stale debt: past this age recovery odds are negligible and continued
+  # contact is pure cost.
+  write_off_after_days: 45
+
+  # A broken promise is a signal, not a licence to chase harder.
+  broken_promise_cooldown_days: 7
+
+  # Never overridable by any score, agent, or policy.
+  hard_stop_on_opt_out: true
+
 channel_eligibility:
   # Retrying these fails identically every time -- it burns the rail and tells
   # the customer nothing. subscription.py already declines to do it; this rule

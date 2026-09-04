@@ -162,6 +162,87 @@ def compliance_cost(
     return count, value
 
 
+def case_metrics(
+    conn: sqlite3.Connection, segments: tuple[str, ...] | None
+) -> dict[str, Any]:
+    """How the recovery *workflow* behaved, as opposed to how it scored.
+
+    Every number above this function is event-level: it can tell you a policy
+    sent 595 messages and recovered Rs 955,080, and cannot tell you whether it
+    got there by working 500 cases properly or by thrashing 100 of them.
+
+    The row that matters most here is `refusals costing a rung`. ADR-009
+    describes a defect where every compliance refusal consumed a ladder rung,
+    and 95 cases climbed the entire ladder having sent nothing at all. That was
+    caught three days late, by hand, because no reported number moved when it
+    was introduced -- recovery and spend both looked plausible. This is the
+    number that would have moved on the same run.
+
+    `cases_never_acted` is an invariant rather than a measurement: a case that
+    exhausted the ladder without ever sending is a bug, and the correct value
+    is zero.
+    """
+    clause, params = _seg(segments, "c.segment")
+
+    def one(sql: str, extra: list | None = None) -> int:
+        return conn.execute(
+            sql, (extra if extra is not None else params)
+        ).fetchone()[0]
+
+    opened = one(f"SELECT count(*) FROM cases c WHERE 1 = 1{clause}")
+    by_state = {
+        r["state"]: r["n"]
+        for r in conn.execute(
+            f"SELECT state, count(*) AS n FROM cases c WHERE 1 = 1{clause} "
+            "GROUP BY state",
+            params,
+        )
+    }
+
+    # `rung` means "the rung to try next" (ADR-008), so on a settled case it is
+    # also the count of rungs consumed.
+    rungs = conn.execute(
+        f"SELECT COALESCE(AVG(c.rung), 0) AS rungs, "
+        f"       COALESCE(AVG(c.attempts), 0) AS attempts "
+        f"FROM cases c WHERE 1 = 1{clause}",
+        params,
+    ).fetchone()
+
+    # A `held` timeline row records a review that produced no action. Whether
+    # it cost a rung is the ADR-009 distinction, written by caseloop._refusal.
+    held = {
+        r["spent"]: r["n"]
+        for r in conn.execute(
+            "SELECT json_extract(ce.detail, '$.rung_spent') AS spent, "
+            "       count(*) AS n FROM case_events ce "
+            "JOIN cases c ON c.id = ce.case_id "
+            f"WHERE ce.kind = 'held'{clause} GROUP BY spent",
+            params,
+        )
+    }
+
+    closed = sum(
+        by_state.get(s, 0)
+        for s in ("recovered", "written_off", "opted_out")
+    )
+    return {
+        "cases_opened": opened,
+        "cases_recovered": by_state.get("recovered", 0),
+        "cases_written_off": by_state.get("written_off", 0),
+        "cases_opted_out": by_state.get("opted_out", 0),
+        "cases_still_open": opened - closed,
+        "mean_rungs_climbed": round(float(rungs["rungs"]), 4),
+        "attempts_per_case": round(float(rungs["attempts"]), 4),
+        "refusals_costing_rung": held.get(1, 0),
+        "refusals_deferred": held.get(0, 0),
+        # Must be zero. See ADR-009.
+        "cases_never_acted": one(
+            "SELECT count(*) FROM cases c WHERE c.attempts = 0 "
+            f"AND c.close_reason LIKE 'ladder_exhausted%'{clause}"
+        ),
+    }
+
+
 def compute(
     conn: sqlite3.Connection,
     cfg_outcomes: dict[str, Any],
@@ -259,6 +340,18 @@ def compute(
         "net_value_ex_churn_paise": (
             recovered_paise + promised_recovered - send_spend
         ),
+        # What each contact was worth, churn aside. This is the targeting
+        # metric: a restraint strategy can win it, whereas net-value-ex-churn
+        # it definitionally cannot -- with churn removed every send has a
+        # margin of ~Rs 1,200 against a ~Rs 5 send cost, so "send everything"
+        # wins that comparison by arithmetic, not by being better.
+        "margin_per_send_paise": (
+            round((recovered_paise + promised_recovered - send_spend) / actions_sent)
+            if actions_sent else 0
+        ),
+        "recovery_per_send": (
+            round(recovered_count / actions_sent, 4) if actions_sent else 0.0
+        ),
         "suppressed_value": one(
             "SELECT count(*) FROM decisions d "
             "JOIN events e ON e.id = d.event_id "
@@ -276,4 +369,5 @@ def compute(
         "contacts_per_customer": round(
             actions_sent / max(1, customers_touched), 4
         ),
+        **case_metrics(conn, segments),
     }

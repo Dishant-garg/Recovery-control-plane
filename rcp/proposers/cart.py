@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import json
 
+from typing import Any
+
+from rcp.config import load
 from rcp.proposers.base import ProposalContext, make_proposal
 from rcp.schema import Channel, Proposal, RootCause
 from rcp.timeutil import MS_PER_HOUR, add_hours
@@ -53,15 +56,58 @@ BASE_CLAIM = {
     RootCause.UNKNOWN.value: 0.28,
 }
 
-# A nudge worth sending money after. Deliberately generous -- the incentive
-# ceiling in policy.yaml is what decides how much actually gets offered, and
-# watching it clamp is the point. Only ever attached to a message: discounting
-# a silent retry spends money the customer will never even see offered.
-INCENTIVE_PCT = 20
+# Spend margin only where the alternative is abandoning the case.
+#
+# This was a flat 20% for two root causes, and it was economically inert: after
+# the compliance ceiling clamped it to min(Rs 200, 15%), a Rs 2,500 cart got an
+# 8% discount worth about +5% of expected value. Real enough to cost money,
+# never enough to rescue anything.
+#
+# The sizing now follows the margin. A first contact gets no discount -- ask
+# before paying. On a later rung, where a bare reminder recovers ~5% and the
+# case is heading for a write-off, the offer is the largest one that still
+# leaves the send worth making:
+#
+#     claim x (amount - incentive)  >=  floor + send cost
+#
+# Rearranged, that is the ceiling below. `compliance/rules.py::IncentiveCeiling`
+# clamps it again, and watching that clamp is still the point.
 INCENTIVE_FOR = {
     RootCause.LIMIT_EXCEEDED.value,
     RootCause.CARD_EXPIRED.value,
+    RootCause.INSUFFICIENT_FUNDS.value,
+    RootCause.AUTH_FAILED.value,
 }
+
+# Never offer more than this share of the amount, whatever the arithmetic says.
+# A discount larger than this stops being a nudge and starts being a sale.
+MAX_INCENTIVE_PCT = 25
+
+
+def margin_sized_incentive(
+    *, amount_paise: int, claim: float, attempts: int, channel: Any,
+    root_cause: str,
+) -> int:
+    """The largest discount that still leaves this send worth making.
+
+    Returns 0 for a silent retry (the customer never sees an offer), for a
+    first contact (ask before paying), and for causes where a discount cannot
+    address the failure -- an expired mandate needs the customer to fix the
+    mandate, and money off does not do that.
+    """
+    if channel is Channel.RETRY or attempts == 0:
+        return 0
+    if root_cause not in INCENTIVE_FOR or claim <= 0:
+        return 0
+
+    cfg = load("scoring")
+    floor = int(cfg.get("min_score_paise", 0))
+    cost = int(cfg["channel_cost_paise"].get(
+        channel.value if hasattr(channel, "value") else str(channel), 0))
+
+    # claim * (amount - incentive) >= floor + cost
+    headroom = amount_paise - int((floor + cost) / claim)
+    return max(0, min(headroom, amount_paise * MAX_INCENTIVE_PCT // 100))
 
 
 class CartProposer:
@@ -74,15 +120,14 @@ class CartProposer:
         if ctx.customer["opted_out"]:
             return None
 
-        channel = self._channel(ctx)
+        channel = ctx.assigned(self._channel(ctx))
         age_hours = max(0, (ctx.now_ms - int(ctx.event["occurred_at"])) // MS_PER_HOUR)
         decay = 0.5 ** (age_hours / HALF_LIFE_HOURS)
 
         claim = BASE_CLAIM[ctx.root_cause] * decay
-        incentive = (
-            ctx.amount_paise * INCENTIVE_PCT // 100
-            if ctx.root_cause in INCENTIVE_FOR and channel is not Channel.RETRY
-            else 0
+        incentive = margin_sized_incentive(
+            amount_paise=ctx.amount_paise, claim=claim, attempts=ctx.attempts,
+            channel=channel, root_cause=ctx.root_cause,
         )
 
         return make_proposal(

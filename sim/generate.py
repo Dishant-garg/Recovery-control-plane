@@ -26,6 +26,7 @@ from typing import Any
 
 from rcp.audit import AuditLog
 from rcp.config import load
+from rcp.env import load_dotenv
 from rcp.ingest.normalize import NormalizeCache, normalize_webhook
 from rcp.ingest.webhook import ingest_event, require_signature
 from rcp.migrations import migrate
@@ -252,6 +253,7 @@ def generate(seed: int = 42, n_events: int | None = None, quiet: bool = False) -
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="generate seeded synthetic events")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-events", type=int, default=None)

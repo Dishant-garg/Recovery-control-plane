@@ -67,6 +67,7 @@ class SubscriptionProposer:
 
         channel, base_claim, why = PLAYBOOK[ctx.root_cause]
         channel, why = self._permitted_channel(ctx, channel, why)
+        channel = ctx.assigned(channel)
         scheduled_at, timing_note, timing_factor = self._schedule(ctx, channel)
 
         claim = base_claim * timing_factor * (RETRY_DECAY ** ctx.retry_index)

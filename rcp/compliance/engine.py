@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from rcp.compliance.rules import (
+    CHANNEL_UNUSABLE,
     DEFAULT_RULES,
     Deny,
     Modify,
@@ -36,6 +37,11 @@ class Verdict:
     trail: list[dict[str, Any]]
     denied_by: str | None = None
     reason: str | None = None
+    # Only meaningful when `allowed` is False. Tells the caller whether the
+    # refusal was about the channel, the timing, or the customer -- which is
+    # what decides whether a ladder rung was spent. See ADR-009.
+    disposition: str | None = None
+    retry_after_ms: int | None = None
 
     @property
     def modified(self) -> bool:
@@ -96,9 +102,12 @@ def evaluate(
         if isinstance(result, Deny):
             entry["verdict"] = "deny"
             trail.append(entry)
+            entry["disposition"] = result.disposition
             return Verdict(
                 allowed=False, proposal=effective, trail=trail,
                 denied_by=result.rule_id, reason=result.note,
+                disposition=result.disposition,
+                retry_after_ms=result.retry_after_ms,
             )
 
         if isinstance(result, Modify):

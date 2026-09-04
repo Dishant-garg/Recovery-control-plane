@@ -28,7 +28,19 @@ from rcp.timeutil import days_from_payday, payday_phase
 # loses sometimes.
 MAX_SUCCESS_PROB = 0.95
 
-# Each prior failure on the same event makes recovery less likely.
+# Each prior failure makes the next attempt less likely to land.
+#
+# This decays on BOTH counts and the distinction matters:
+#
+#   retry_index    the gateway's own retries before the webhook fired -- a
+#                  static property of the event
+#   prior_attempts how many rungs WE have already climbed on this case
+#
+# Only the first was modelled at first, so the fourth contact on a case had the
+# same odds as the first. Four near-independent shots at ~20% compound to ~59%,
+# which is why the naive arms were "recovering" 49% of everything. Attempts on
+# one customer are strongly correlated, not independent: somebody who ignored
+# three messages is not a fresh coin flip on the fourth.
 RETRY_DECAY = 0.68
 
 
@@ -71,6 +83,7 @@ def success_probability(
     propensity: float,
     incentive_paise: int = 0,
     amount_paise: int = 0,
+    prior_attempts: int = 0,
 ) -> float:
     """What this attempt is actually worth, timing included.
 
@@ -89,7 +102,8 @@ def success_probability(
     phase = payday_phase(days_from_payday(scheduled_at, payday_dom))
     timing = float(cfg["payday_multiplier"][phase])
 
-    p = base * channel_eff * timing * propensity * (RETRY_DECAY ** retry_index)
+    p = (base * channel_eff * timing * propensity
+         * (RETRY_DECAY ** (retry_index + prior_attempts)))
     p *= incentive_lift(cfg, incentive_paise, amount_paise)
     return max(0.0, min(MAX_SUCCESS_PROB, p))
 
@@ -109,6 +123,7 @@ def resolve(
     contacts_before: int,
     asks_for_promise: bool = False,
     incentive_paise: int = 0,
+    prior_attempts: int = 0,
 ) -> Resolution:
     p = success_probability(
         cfg,
@@ -120,6 +135,7 @@ def resolve(
         propensity=propensity,
         incentive_paise=incentive_paise,
         amount_paise=amount_paise,
+        prior_attempts=prior_attempts,
     )
     succeeded = int(_draw(action_id, "success") < p)
 

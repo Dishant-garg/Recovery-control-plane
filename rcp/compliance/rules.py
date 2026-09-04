@@ -61,11 +61,23 @@ class Modify:
     ok: bool = True
 
 
+# What a refusal means for the case that provoked it. Without this distinction
+# every denial burned a ladder rung, and cases were exhausting the whole ladder
+# on refusals having sent nothing at all -- 95 of them in one run. See ADR-009.
+CHANNEL_UNUSABLE = "channel_unusable"   # this rung will never work; climb past it
+RETRY_LATER = "retry_later"             # the rung is fine, the timing is not
+STOP = "stop"                           # the case is over
+
+
 @dataclass(frozen=True)
 class Deny:
     rule_id: str
     note: str
     observed: dict[str, Any] = field(default_factory=dict)
+    # Conservative default: assume the channel is the problem. A rule that
+    # means "come back later" has to say so explicitly.
+    disposition: str = CHANNEL_UNUSABLE
+    retry_after_ms: int | None = None
     ok: bool = False
 
 
@@ -87,7 +99,8 @@ class OptOut:
 
     def check(self, ctx: RuleContext) -> Verdict:
         if ctx.customer.get("opted_out"):
-            return Deny(self.id, "customer has opted out of all contact")
+            return Deny(self.id, "customer has opted out of all contact",
+                        disposition=STOP)
         return Allow(self.id)
 
 
@@ -224,6 +237,10 @@ class ActivePromise:
             f"active promise to pay, due in "
             f"{(promise['due_at'] - ctx.now_ms) // MS_PER_DAY}d (+{grace // MS_PER_DAY}d grace)",
             {"promise_id": promise["id"], "due_at": promise["due_at"]},
+            # The customer committed to a date. Nothing about the channel is
+            # wrong -- come back after the promise resolves.
+            disposition=RETRY_LATER,
+            retry_after_ms=int(promise["due_at"]) + grace,
         )
 
 

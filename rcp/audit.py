@@ -37,9 +37,24 @@ class AuditLog:
     already serialized behind store.WRITE_LOCK.
     """
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, reset: bool = False) -> None:
+        """`reset` truncates the log before writing.
+
+        Only legitimate when the database the log describes is *also* being
+        replaced -- which is exactly what `eval/run.py` does when it forks a
+        fresh per-arm database. Without it the chain accumulates records from
+        every previous run: still internally valid, and describing databases
+        that no longer exist. Measured before this existed: 136,644 audit
+        records against 1,049 rows in `decisions`, and a 51 MB file for a run
+        that produced 577 actions.
+
+        Never pass this in production. There, a log outliving its database is
+        the point.
+        """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if reset and self.path.exists():
+            self.path.unlink()
         self._seq, self._prev = self._resume()
 
     def _resume(self) -> tuple[int, str]:

@@ -73,6 +73,48 @@ class Language(str, Enum):
     HINGLISH = "hinglish"
 
 
+class CaseState(str, Enum):
+    """A case is the unit of recovery work -- see ADR-008.
+
+    `open` has an action due now; `waiting` is inside a cooldown or waiting on
+    an outcome. The four terminal states are deliberately distinct: "we got the
+    money", "we decided to stop", "they told us to stop", and "they committed to
+    a date" are four different things, and collapsing them would make the
+    stopping rules unauditable.
+    """
+
+    OPEN = "open"
+    WAITING = "waiting"
+    PROMISED = "promised"
+    RECOVERED = "recovered"
+    WRITTEN_OFF = "written_off"
+    OPTED_OUT = "opted_out"
+
+
+class CaseEventKind(str, Enum):
+    OPENED = "opened"
+    ESCALATED = "escalated"
+    HELD = "held"
+    ACTED = "acted"
+    OUTCOME = "outcome"
+    CLOSED = "closed"
+
+
+class DecidedBy(str, Enum):
+    """Who made a call. Recorded on every case_events row.
+
+    This is what makes the timeline answer "why did this customer hear from us a
+    fourth time" -- an escalation the agent chose reads very differently from
+    one a fixed policy produced, and a refusal by compliance reads differently
+    again from a stopping rule firing.
+    """
+
+    POLICY = "policy"
+    AGENT = "agent"
+    COMPLIANCE = "compliance"
+    STOPPING_RULE = "stopping_rule"
+
+
 def sql_in(enum_cls: type[Enum]) -> str:
     """Render an enum as a SQL `IN (...)` body. Used to build CHECK constraints."""
     return ", ".join(f"'{m.value}'" for m in enum_cls)
@@ -196,6 +238,50 @@ class Promise(Row):
     updated_at: int
 
 
+class Case(Row):
+    """One unit of recovery work, worked over days through an escalation ladder.
+
+    `rung` indexes into the ladder for this segment (config/policy.yaml).
+    `next_review_at` is when the loop should look at this case again -- the
+    partial index on it is what keeps the daily sweep cheap as closed cases
+    accumulate.
+    """
+
+    id: str
+    event_id: str
+    customer_id: str
+    segment: Segment
+    amount_paise: int = Field(ge=0)
+    state: CaseState = CaseState.OPEN
+    rung: int = Field(default=0, ge=0)
+    attempts: int = Field(default=0, ge=0)
+    next_review_at: int | None = None
+    opened_at: int
+    closed_at: int | None = None
+    close_reason: str | None = None
+
+    @property
+    def is_closed(self) -> bool:
+        return self.state in {
+            CaseState.RECOVERED.value, CaseState.WRITTEN_OFF.value,
+            CaseState.OPTED_OUT.value,
+        }
+
+
+class CaseEvent(Row):
+    """One line of a case's timeline. Append-only."""
+
+    id: str
+    case_id: str
+    seq: int = Field(ge=0)
+    kind: CaseEventKind
+    rung: int | None = None
+    decided_by: DecidedBy
+    reason: str
+    detail: str
+    at: int
+
+
 class BankHealth(Row):
     id: str
     bank_code: str
@@ -222,6 +308,17 @@ class AuditRecord(Row):
 # --------------------------------------------------------------------------
 # non-persisted results
 # --------------------------------------------------------------------------
+
+class Stop(Row):
+    """A stopping rule firing. Same shape as `Suppressed` and
+    `compliance.rules.Deny` on purpose -- every refusal in this system explains
+    itself with a rule id and the numbers behind it, not just an outcome."""
+
+    rule: str
+    reason: str
+    close_state: CaseState = CaseState.WRITTEN_OFF
+    observed: dict[str, Any] = Field(default_factory=dict)
+
 
 class Suppressed(Row):
     """Returned when a guard refuses an action. Carries the observed numbers so

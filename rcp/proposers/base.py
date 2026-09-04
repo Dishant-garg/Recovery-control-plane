@@ -38,6 +38,16 @@ class ProposalContext:
     window_id: str
     now_ms: int
 
+    # Set once escalation is driving. The ladder owns channel ORDER -- a
+    # proposer free to pick any channel each time could reach for voice on the
+    # first attempt, which is escalation in name only (ADR-008). What stays
+    # with the proposer is the interesting half: when to act, what it is worth,
+    # and what to ask for.
+    rung: int = 0
+    channel: Any = None
+    case_id: str | None = None
+    attempts: int = 0
+
     @property
     def root_cause(self) -> str:
         return self.event["root_cause"]
@@ -53,6 +63,19 @@ class ProposalContext:
     @property
     def payday_phase(self) -> str:
         return self.event["payday_phase"]
+
+    def assigned(self, fallback: Channel) -> Channel:
+        """The ladder's channel when escalation is driving, else the proposer's
+        own pick.
+
+        Always returns a `Channel`, never the raw string the ladder config
+        holds -- proposers reach for `.value` and a str would fail at the point
+        of use rather than here.
+        """
+        if self.channel is None:
+            return fallback
+        return (self.channel if isinstance(self.channel, Channel)
+                else Channel(self.channel))
 
 
 @runtime_checkable

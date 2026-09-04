@@ -19,6 +19,9 @@ import sqlite3
 
 from rcp.schema import (
     ActionStatus,
+    CaseEventKind,
+    CaseState,
+    DecidedBy,
     Channel,
     DecisionOutcome,
     Language,
@@ -251,7 +254,80 @@ ALTER TABLE customers ADD COLUMN consent TEXT NOT NULL DEFAULT '{}';
 """
 
 
-MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2]
+# A case is the missing object. Before this, an event got exactly one decision
+# and was never revisited -- the daily loop only ever looked at events that
+# occurred that day, so a failure on day 3 was invisible on day 10. Nothing
+# persisted, so there was nothing to escalate and nothing to stop.
+#
+# `cases` is mutable in a named subset of columns, like `actions`. `case_events`
+# is the append-only timeline, and every row records WHO decided: policy, agent,
+# compliance, or a stopping rule. That column is what lets the audit trail
+# answer "why did this customer hear from us a fourth time" and "why did we give
+# up on this invoice". See ADR-008.
+SCHEMA_V3 = f"""
+CREATE TABLE cases (
+    id             TEXT PRIMARY KEY,
+    event_id       TEXT NOT NULL UNIQUE REFERENCES events(id),
+    customer_id    TEXT NOT NULL REFERENCES customers(id),
+    segment        TEXT NOT NULL CHECK (segment IN ({sql_in(Segment)})),
+    amount_paise   INTEGER NOT NULL CHECK (amount_paise >= 0),
+    state          TEXT NOT NULL CHECK (state IN ({sql_in(CaseState)})),
+    rung           INTEGER NOT NULL DEFAULT 0 CHECK (rung >= 0),
+    attempts       INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_review_at INTEGER,
+    opened_at      INTEGER NOT NULL,
+    closed_at      INTEGER,
+    close_reason   TEXT,
+    -- A closed case must say why, and an open one must not pretend to have.
+    CHECK ((closed_at IS NULL) = (close_reason IS NULL))
+) STRICT;
+
+CREATE TABLE case_events (
+    id         TEXT PRIMARY KEY,
+    case_id    TEXT NOT NULL REFERENCES cases(id),
+    seq        INTEGER NOT NULL CHECK (seq >= 0),
+    kind       TEXT NOT NULL CHECK (kind IN ({sql_in(CaseEventKind)})),
+    rung       INTEGER,
+    decided_by TEXT NOT NULL CHECK (decided_by IN ({sql_in(DecidedBy)})),
+    reason     TEXT NOT NULL,
+    detail     TEXT NOT NULL CHECK (json_valid(detail)),
+    at         INTEGER NOT NULL,
+    UNIQUE (case_id, seq)
+) STRICT;
+
+CREATE TRIGGER case_events_no_update BEFORE UPDATE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case_events is append-only'); END;
+
+CREATE TRIGGER case_events_no_delete BEFORE DELETE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case_events is append-only'); END;
+
+-- Only the working state moves. Identity, the event it came from, and the
+-- amount owed are fixed for the life of the case.
+CREATE TRIGGER cases_immutable_cols BEFORE UPDATE ON cases
+WHEN OLD.id           <> NEW.id
+  OR OLD.event_id     <> NEW.event_id
+  OR OLD.customer_id  <> NEW.customer_id
+  OR OLD.segment      <> NEW.segment
+  OR OLD.amount_paise <> NEW.amount_paise
+  OR OLD.opened_at    <> NEW.opened_at
+BEGIN
+    SELECT RAISE(ABORT, 'cases: only state, rung, attempts, next_review_at, closed_at and close_reason are mutable');
+END;
+
+CREATE TRIGGER cases_no_delete BEFORE DELETE ON cases
+BEGIN SELECT RAISE(ABORT, 'cases is append-only'); END;
+
+-- The review loop's hot path, mirroring idx_actions_pending: a partial index
+-- stays tiny however many cases have already closed.
+CREATE INDEX idx_cases_review ON cases(next_review_at)
+    WHERE state IN ('open', 'waiting');
+
+CREATE INDEX idx_cases_customer ON cases(customer_id, state);
+CREATE INDEX idx_case_events_case ON case_events(case_id, seq);
+"""
+
+
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
 
 
 def migrate(conn: sqlite3.Connection) -> int:

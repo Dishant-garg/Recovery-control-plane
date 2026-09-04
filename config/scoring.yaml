@@ -43,5 +43,9 @@ churn:
   # hardcoded because the honest answer is a break-even, not a number:
   # `make sensitivity` sweeps it.
   ltv_fraction: 1.0
-  opt_out_base: 0.010
-  opt_out_per_extra_contact: 0.018
+  # Calibrated from analyst findings: predicted 8.77% vs observed 5.25%
+  # (1.7x overestimate). Priors scaled to match observed rates across 8 seeds.
+  # `precedent.observed_opt_out_rate()` learns the actual level from outcomes;
+  # these are just the starting point before any observations arrive.
+  opt_out_base: 0.006
+  opt_out_per_extra_contact: 0.011
