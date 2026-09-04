@@ -5,12 +5,17 @@ refused by a compliance engine when it should be, and stopped by rules that
 decide when to give up — with a written reason for everything that did not
 happen.
 
-Every number below is reproducible offline, with no API key, in about 30
-seconds.
+Every number below is reproducible offline, with no API key.
 
 ```bash
-make setup && make data && make eval
+make setup && make data && make eval     # ~3 min: 20 seeds x 3 arms
+make eval SEEDS=42                       # ~10s, if you just want it to run
 ```
+
+Measured on a fresh clone: `make setup` ~20s, `make data` under a second,
+`make eval` about three minutes for the full 20-seed sweep. `make test` passes
+before `make data` too — 535 pass and 30 skip, because the tests that need a
+completed run say so rather than failing.
 
 ## Results
 
