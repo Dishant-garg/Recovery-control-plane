@@ -2,11 +2,18 @@ pydantic>=2.9
 pytest>=8.0
 pyyaml>=6.0
 
-# Added as their milestones land:
-#   fastapi + uvicorn   webhook intake (rcp/ingest/webhook.py is already
-#                       framework-agnostic; the route is a thin wrapper)
-#   httpx               rcp/execute/razorpay_rest.py
-#   anthropic           rcp/llm/providers/anthropic.py
-#
+# The dashboard (app/) and the webhook route. Server-rendered Jinja2 -- there
+# is deliberately no frontend toolchain, no build step, and nothing to go stale.
+fastapi>=0.115
+jinja2>=3.1
+uvicorn>=0.30
+httpx>=0.27          # fastapi.testclient, and rcp/execute/razorpay_rest.py
+
+# Optional -- only for a live provider. RCP_LLM=fallback needs neither.
+# Every vendor goes through rcp/llm/adapter.py, so you install only the one
+# SDK you actually use.
+# anthropic>=0.40    RCP_LLM=anthropic
+# openai>=1.40       RCP_LLM=groq | gemini | openai | together | ollama
+
 # Deliberately absent: any vector store or embedding client. See
 # docs/adr/ADR-006-no-vector-database.md.

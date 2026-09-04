@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Live · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>Send a webhook</h1>
+<p class="lede">
+  A Razorpay-shaped <code>payment.failed</code> envelope, HMAC-signed and posted
+  to the real intake path. The signature is verified against the <em>raw</em>
+  body — re-serializing the JSON first would reorder keys and break the HMAC,
+  which is the bug every webhook integration eventually ships.
+</p>
+
+{% if not secret_set %}
+<div class="banner fail" style="margin-bottom:20px">
+  RCP_WEBHOOK_SECRET is not set; falling back to <code>dev-secret</code>.
+  A deployment taking real Razorpay traffic must set it.
+</div>
+{% endif %}
+
+<div class="panel">
+  <label class="muted" style="font-size:12px">envelope</label>
+  <textarea id="payload" rows="20" style="width:100%;margin-top:8px"></textarea>
+
+  <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <button onclick="send(true)">sign &amp; send</button>
+    <button onclick="send(false)">send unsigned &mdash; expect 400</button>
+    <button onclick="newId()">new payment id</button>
+    <button onclick="location.reload()">refresh events</button>
+  </div>
+
+  <pre id="out" style="margin-top:14px">ready</pre>
+</div>
+
+<h2>Most recent events in rcp.db</h2>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>event</th><th>customer</th><th>segment</th>
+        <th>root cause</th><th class="num">amount</th><th>occurred</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in recent %}
+      <tr>
+        <td><code>{{ e["id"][:14] }}</code></td>
+        <td class="muted">{{ e["customer_id"][:14] }}</td>
+        <td>{{ e["segment"] }}</td>
+        <td><code>{{ e["root_cause"] }}</code></td>
+        <td class="num">Rs {{ e["amount_paise"] | rupees }}</td>
+        <td class="muted">{{ e["occurred_at"] | when }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="lede" style="margin-top:20px">
+  Post the same envelope twice: the second returns
+  <code>"duplicate": true</code>. That is not application logic — it is
+  <code>UNIQUE (provider, provider_event_id)</code> doing the work, because
+  Razorpay retries on any non-2xx and a dedup cache is one more thing that can
+  fall out of sync.
+</p>
+
+<script>
+const DEFAULT = {
+  entity: "event",
+  event: "payment.failed",
+  created_at: Math.floor(Date.now() / 1000),
+  payload: {
+    payment: {
+      entity: {
+        id: "pay_demo" + Math.random().toString(36).slice(2, 10),
+        amount: 250000,
+        currency: "INR",
+        status: "failed",
+        error_code: "BAD_REQUEST_ERROR",
+        error_description: "insufficient funds in the customer's account",
+        notes: {
+          customer_id: {{ (customer["id"] if customer else "cus_demo") | tojson }},
+          segment: {{ (customer["segment"] if customer else "subscription") | tojson }}
+        }
+      }
+    }
+  }
+};
+
+function newId() {
+  // The payment id is the dedup key, so a second send of the same envelope is
+  // correctly a no-op. Rotating it here lets the demo continue without a
+  // reload -- and makes the dedup behaviour a choice rather than a surprise.
+  const el = document.getElementById("payload");
+  const doc = JSON.parse(el.value);
+  doc.payload.payment.entity.id =
+    "pay_demo" + Math.random().toString(36).slice(2, 10);
+  doc.created_at = Math.floor(Date.now() / 1000);
+  el.value = JSON.stringify(doc, null, 2);
+  const out = document.getElementById("out");
+  out.textContent = "new payment id: " + doc.payload.payment.entity.id;
+  out.style.color = "";
+}
+
+document.getElementById("payload").value = JSON.stringify(DEFAULT, null, 2);
+
+async function send(signed) {
+  const out = document.getElementById("out");
+  const raw = document.getElementById("payload").value;
+  out.textContent = "sending…";
+  try {
+    let signature = "nonsense";
+    if (signed) {
+      // Posted as the body, NOT as a FormData field. The Fetch standard's
+      // multipart/form-data serializer rewrites every lone LF in a field value
+      // to CRLF, so signing through a form signed different bytes than the
+      // ones sent below, and every signed send came back 400.
+      const s = await fetch("/api/sign", {method: "POST", body: raw});
+      signature = (await s.json()).signature;
+    }
+    const r = await fetch("/api/webhook?seed={{ seed }}", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-razorpay-signature": signature
+      },
+      body: raw
+    });
+    const text = await r.text();
+
+    // Say whether this is the outcome the button was demonstrating.
+    // A 400 from "send unsigned" is the signature check working; a 400 from
+    // "sign & send" is a real failure. Printing the same two lines for both
+    // makes a working demo unreadable.
+    let body = {};
+    try { body = JSON.parse(text); } catch (e) { /* not JSON */ }
+
+    const expected = signed ? r.status === 200 : r.status === 400;
+    let verdict;
+    if (!signed) {
+      verdict = r.status === 400
+        ? "PASS - unsigned webhook rejected, exactly as it should be"
+        : "FAIL - an unsigned webhook was not rejected";
+    } else if (r.status !== 200) {
+      verdict = "FAIL - a signed webhook should have been accepted";
+    } else if (body.duplicate) {
+      // Nothing was written, so saying "ingested" would be a lie. This is the
+      // dedup demo: UNIQUE (provider, provider_event_id) refusing a redelivery
+      // Razorpay is expected to make on any non-2xx.
+      verdict =
+        "PASS - redelivery ignored. This payment id is already in the " +
+        "database, so UNIQUE (provider, provider_event_id) dropped it.\n" +
+        "Press \u2018new payment id\u2019 to send a fresh event.";
+    } else {
+      verdict = "PASS - signature accepted, new event ingested";
+    }
+
+    out.textContent = verdict + "\n\nHTTP " + r.status + "\n" + text;
+    out.style.color = expected ? "var(--good)" : "var(--bad)";
+  } catch (e) {
+    out.textContent =
+      "error: " + e +
+      "\n\nThe page reached no server. It is usually gone -- restart it with " +
+      "`make dashboard` and reload.";
+    out.style.color = "var(--bad)";
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Agents · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>The agents, and what they found</h1>
+<p class="lede">
+  Five agents. Each ships a prompt <em>and</em> a deterministic routine over the
+  same tools, so every number in this dashboard is reproducible with no API key
+  (<a href="https://github.com" onclick="return false">ADR-007</a>). They do not
+  execute anything — they author and audit, and deterministic code executes.
+</p>
+
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr><th>agent</th><th>run with</th><th>decides</th>
+          <th>can ask its own bound</th></tr>
+    </thead>
+    <tbody>
+      {% for name, path, cmd, decides, tool, asks in agents %}
+      <tr>
+        <td><strong>{{ name }}</strong><br>
+            <span class="muted" style="font-size:11px">{{ path }}</span></td>
+        <td><code>{{ cmd }}</code></td>
+        <td style="white-space:normal">{{ decides }}</td>
+        <td style="white-space:normal">
+          <code>{{ tool }}</code><br>
+          <span class="muted" style="font-size:12px">“{{ asks }}”</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Try to break the compliance filter</h2>
+<p class="lede">
+  Write something a collections agent might send. The critic runs here, in the
+  browser round-trip — no model, no key, no database. It is the same
+  <code>try_copy</code> tool the red team agent uses, so you are attacking it
+  with exactly what the agent gets.
+</p>
+
+<div class="panel">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+    {% for label, text in presets %}
+      <button type="button" class="chip" onclick="preset({{ loop.index0 }})"
+      >{{ label }}</button>
+    {% endfor %}
+  </div>
+
+  <textarea id="attack" rows="4" style="width:100%"
+    placeholder="Rs 2,500 pending hai. …"></textarea>
+
+  <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+    <select id="attack-channel">
+      {% for c in channels %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+    <button onclick="checkCopy()">check it</button>
+    <span class="muted" style="font-size:12px">
+      <code>{{ "{link}" }}</code> is filled by the executor and is allowed to remain
+    </span>
+  </div>
+
+  <pre id="attack-out" style="margin-top:14px">ready</pre>
+
+  <p class="muted" style="font-size:12px;margin:12px 0 0">
+    <strong>Seven tactics are refused</strong>, by conduct rather than wording:
+    {% for name in tactics %}<code>{{ name }}</code>{% if not loop.last %} · {% endif %}{% endfor %}.
+  </p>
+
+  <p class="muted" style="font-size:12px;margin:10px 0 0">
+    If you get something through, that is a finding rather than a gotcha — and
+    the design already expects it. This filter is layer 1. The guarantee is that
+    no template reaches a customer without a human registering it with TRAI's
+    DLT registry and with WhatsApp, because an unregistered template is
+    undeliverable in this market anyway. A live agent went past an earlier
+    version of these rules with “hurt your borrowing score”, which is how the
+    tactic categories came to exist.
+  </p>
+</div>
+
+<h2>Red team vs the compliance critic</h2>
+<p class="lede">
+  Run live, right now, on page load. Each line is copy a compliance officer
+  would refuse; the critic must block every one. The first seven once passed a
+  sixteen-phrase blacklist — <strong>abuse is a set of tactics and a blacklist
+  is a set of words.</strong> The eighth was written by the agent against the
+  rewritten rules and beat them too.
+</p>
+
+{% set through = scoreboard | selectattr("blocked", "equalto", false) | list %}
+<div class="banner {{ 'ok' if not through else 'fail' }}" style="margin-bottom:16px">
+  {{ scoreboard | length - through | length }} / {{ scoreboard | length }} blocked
+  {%- if through %} — {{ through | length }} got through, a coercion rule has regressed
+  {%- else %} — nothing got through{% endif %}
+</div>
+
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr><th>verdict</th><th>tactic</th><th>copy</th><th>refused by</th></tr>
+    </thead>
+    <tbody>
+      {% for row in scoreboard %}
+      <tr>
+        <td><span class="chip {{ 'good' if row.blocked else 'bad' }}">
+          {{ "BLOCKED" if row.blocked else "PASSES" }}</span></td>
+        <td><code>{{ row.tactic }}</code><br>
+            <span class="muted" style="font-size:11px;white-space:normal">
+              {{ row.description }}</span></td>
+        <td style="white-space:normal;max-width:32em">{{ row.text }}</td>
+        <td class="muted">{{ row.by or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Hear the Hinglish</h2>
+<p class="lede">
+  The brief names <em>Hinglish voice recovery</em>. These are the registered
+  spoken templates — Latin script on purpose, because a Devanagari SMS encodes
+  as UCS-2 and bills at 70 characters a segment against 160, and because an
+  en_IN voice reads “Aapke account par” the way a person does.
+  None contains a link: <code>url_in_voice</code> refuses that, since nobody
+  writes down a URL from a phone call.
+</p>
+
+<div class="panel">
+  {% for v in voices %}
+  <div style="padding:12px 0;{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <code>{{ v.id }}</code>
+      <span class="chip">{{ v.language }}</span>
+      <span class="chip">{{ v.purpose }}</span>
+      {% if v.blocked_by %}
+        <span class="chip bad">{{ v.blocked_by }}</span>
+      {% else %}
+        <span class="chip good">sayable</span>
+      {% endif %}
+      <span class="muted" style="font-size:11px;margin-left:auto">
+        {{ v.chars }} chars</span>
+    </div>
+    <p style="margin:8px 0 6px;white-space:pre-wrap">{{ v.text }}</p>
+    {% if v.audio %}
+      <audio controls preload="none" src="{{ v.audio }}"
+             style="width:100%;max-width:24em;height:32px"></audio>
+    {% else %}
+      <p class="muted" style="font-size:12px;margin:4px 0 0">
+        no audio yet — run <code>make voice</code> on a Mac
+        (<code>say</code> ships with macOS; the output is committed so everyone
+        else just plays it)
+      </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<h2>What the authoring agents proposed</h2>
+<p class="lede">
+  Proposals awaiting review, not applied changes. The composer and the strategy
+  agent write here and patch nothing: a prior that rewrites itself from its own
+  outcomes is a feedback loop, and an unregistered message template is
+  undeliverable anyway.
+</p>
+
+{% for group in drafts %}
+<div class="panel" style="margin-bottom:14px">
+  <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+    <strong>{{ group.agent }}</strong>
+    {% if group.provider %}
+      <span class="chip {{ 'on' if group.provider != 'fallback' else '' }}">
+        {{ group.provider }}{% if group.model %} · {{ group.model }}{% endif %}
+      </span>
+    {% endif %}
+    <span class="muted" style="margin-left:auto">
+      {{ group['items'] | length }} proposed</span>
+  </div>
+
+  {% if group['items'] %}
+    <ul style="margin:12px 0 0;padding-left:18px">
+      {% for item in group['items'] %}
+      <li style="margin-bottom:9px">
+        {% if item.template_id is defined %}
+          <code>{{ item.template_id }}</code><br>
+          <span style="white-space:pre-wrap">{{ item.text }}</span>
+        {% elif item.table is defined %}
+          <code>{{ item.segment }}.{{ item.table }}</code>:
+          {{ item.action }} <code>{{ item.root_cause }}</code>
+          {%- if item.value is not none %} → {{ item.value }}{% endif %}<br>
+          <span class="muted">{{ item.evidence }}</span>
+        {% else %}
+          <span class="chip bad">{{ item.tactic }}</span>
+          {{ item.text }}<br>
+          <span class="muted">{{ item.why_abusive }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted" style="margin:10px 0 0">
+      Nothing proposed yet — run <code>{{ group.command }}</code>.
+      Output is gitignored, because a committed proposal looks like a decision.
+    </p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<h2>Who decided, in this run</h2>
+<div class="panel">
+  {% set top = deciders.values() | list | max if deciders else 1 %}
+  {% for who, n in deciders.items() %}
+  <div class="bar-row">
+    <span class="label">{{ who }}</span>
+    <span class="track"><span class="fill"
+      style="width: {{ (100 * n / top) | round(1) }}%"></span></span>
+    <span class="n">{{ "{:,}".format(n) }}</span>
+  </div>
+  {% endfor %}
+
+  <p class="muted" style="font-size:12px;margin:14px 0 0">
+    <strong id="decider-note">No <code>agent</code> rows here, on purpose.</strong> The batch eval
+    runs the deterministic policy so <code>make eval</code> stays
+    byte-reproducible and needs no API key — the headline number has to be
+    verifiable by someone with neither. <code>--live N</code> puts the recovery
+    agent in this loop for N cases, and those rows appear as
+    <code>decided_by = agent</code> on the case timeline.
+  </p>
+</div>
+
+<script>
+const PRESETS = {{ presets | map(attribute=1) | list | tojson }};
+
+function preset(i) {
+  document.getElementById("attack").value = PRESETS[i];
+  checkCopy();
+}
+
+async function checkCopy() {
+  const out = document.getElementById("attack-out");
+  const text = document.getElementById("attack").value;
+  const channel = document.getElementById("attack-channel").value;
+  if (!text.trim()) { out.textContent = "write something first"; return; }
+
+  out.textContent = "checking…";
+  out.style.color = "";
+  try {
+    const r = await fetch("/api/critic-check", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({text: text, channel: channel})
+    });
+    const j = await r.json();
+    if (!r.ok) { out.textContent = "HTTP " + r.status + " — " + (j.detail || ""); return; }
+
+    const errors = j.findings.filter(f => f.severity === "error");
+    const warns  = j.findings.filter(f => f.severity === "warn");
+
+    let lines = [];
+    lines.push(j.passes
+      ? "ALLOWED — the critic has no objection to sending this"
+      : "REFUSED — " + errors.length + " rule" + (errors.length === 1 ? "" : "s") + " blocked it");
+
+    for (const f of errors.concat(warns)) {
+      lines.push("");
+      lines.push((f.severity === "error" ? "  blocked  " : "  warning  ") + f.rule);
+      lines.push("           " + f.note);
+      if (f.observed && f.observed.tactics) {
+        lines.push("           tactics: " + f.observed.tactics.join(", "));
+      }
+    }
+    if (j.passes && warns.length === 0) {
+      lines.push("");
+      lines.push("  Nothing matched. If this reads as coercive to you, it is a");
+      lines.push("  finding — the rules are lexical and get paraphrased around.");
+    }
+
+    // textContent, never innerHTML: this is untrusted input echoed back.
+    out.textContent = lines.join("\n");
+    out.style.color = j.passes ? "var(--good)" : "var(--bad)";
+  } catch (e) {
+    out.textContent = "error: " + e;
+    out.style.color = "var(--bad)";
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Recovery Control Plane{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/?seed={{ seed }}&arm={{ arm }}">
+      recovery&#8203;<span>control&#8203;plane</span>
+    </a>
+    <nav>
+      {% for href, label in [('/', 'overview'), ('/cases', 'cases'),
+                             ('/agents', 'agents'), ('/audit', 'audit'),
+                             ('/live', 'live')] %}
+        <a href="{{ href }}?seed={{ seed }}&arm={{ arm }}"
+           class="{{ 'on' if path == href or (href != '/' and path.startswith(href)) else '' }}"
+        >{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <form class="switch" method="get" action="{{ path }}">
+      <select name="arm" onchange="this.form.submit()">
+        {% for a in arms %}
+          <option value="{{ a }}" {{ 'selected' if a == arm }}>{{ a }}</option>
+        {% endfor %}
+      </select>
+      <select name="seed" onchange="this.form.submit()">
+        {% for s in seeds %}
+          <option value="{{ s }}" {{ 'selected' if s == seed }}>seed {{ s }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</header>
+
+<main class="wrap">
+  {% block body %}{% endblock %}
+</main>
+
+<footer class="wrap">
+  <p>
+    Read-only over <code>data/seed_{{ seed }}/rcp_{{ arm }}.db</code>.
+    Every number here is reproducible with <code>make data &amp;&amp; make eval</code>.
+  </p>
+</footer>
+</body>
+</html>

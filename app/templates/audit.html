@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Audit · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>Audit chain</h1>
+<p class="lede">
+  Every record is hashed with the hash before it. Editing a body, reordering a
+  line, or deleting a record all break the chain at the point of damage — and
+  the check below names the record where it broke.
+</p>
+
+<div class="banner {{ 'ok' if ok else 'fail' }}" id="badge">
+  {{ "chain intact" if ok else "CHAIN BROKEN" }} — {{ message }}
+</div>
+
+<p class="muted" style="font-size:12px;margin-top:12px">
+  <code>{{ path }}</code> · {{ "{:,}".format(total) }} records
+</p>
+
+<h2>Try to break it</h2>
+<p class="lede">
+  The chain is not a claim about our discipline — it is recomputable. Change a
+  single character in the file and re-run the check:
+</p>
+<pre>sed -i '' '5s/"kind":"decision"/"kind":"tampered"/' {{ path }}
+curl -s localhost:8000/api/verify?seed={{ seed }}&amp;arm={{ arm }}</pre>
+<p class="lede">
+  The same check runs offline as <code>make verify-audit</code>, which exits 1
+  on tamper — so it can gate a deployment rather than only inform a reviewer.
+</p>
+
+<h2>Most recent records</h2>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th class="num">seq</th>
+        <th>kind</th>
+        <th>ref</th>
+        <th>at</th>
+        <th>hash</th>
+        <th>body</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="num">{{ r["seq"] }}</td>
+        <td><code>{{ r["kind"] }}</code></td>
+        <td class="muted">{{ (r["ref_id"] or "—")[:18] }}</td>
+        <td class="muted">{{ r["ts"] | when }}</td>
+        <td class="muted"><code>{{ r["hash"][:12] }}</code></td>
+        <td class="muted">{{ r["body"] | tojson | truncate(72, true) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">no records</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  // Re-verify without a full page load, so tampering the file and watching the
+  // badge flip is a two-second demo rather than a reload.
+  setInterval(async () => {
+    try {
+      const r = await fetch(
+        "/api/verify?seed={{ seed }}&arm={{ arm }}", {cache: "no-store"});
+      const j = await r.json();
+      const el = document.getElementById("badge");
+      el.className = "banner " + (j.ok ? "ok" : "fail");
+      el.textContent = (j.ok ? "chain intact" : "CHAIN BROKEN") + " — " + j.message;
+    } catch (e) { /* leave the server-rendered state in place */ }
+  }, 4000);
+</script>
+{% endblock %}

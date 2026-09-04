@@ -2,7 +2,7 @@ PY    := .venv/bin/python
 SEED  ?= 42
 SEEDS ?=
 
-.PHONY: setup test verify-audit clean help data baseline eval demo scale
+.PHONY: setup test verify-audit clean help data baseline eval demo scale analyze llm-check
 .PHONY: live sensitivity
 
 help:
@@ -14,6 +14,15 @@ help:
 	@echo "  make test          full invariant suite"
 	@echo "  make verify-audit  recompute the audit hash chain (exit 1 on tamper)"
 	@echo "  make sensitivity   break-even on the churn assumption"
+	@echo "  make analyze       agent investigates where the control plane loses"
+	@echo "  make llm-check     one live tool-use round trip (RCP_LLM=groq etc)"
+	@echo "  make demo-agent    recovery agent decides 5 cases live"
+	@echo "  make dashboard     live dashboard on http://localhost:8000"
+	@echo "  make drafts        composer agent drafts missing templates"
+	@echo "  make strategy      audit the proposers' hand-written tables"
+	@echo "  make redteam       attack the compliance critic to find its holes"
+	@echo "  make voice         render the spoken templates to audio (macOS)"
+	@echo "  make live          real Razorpay test-mode Payment Links"
 	@echo "  make scale         100k-event stress run for docs/SCALE.md"
 	@echo "  make clean         drop generated data"
 
@@ -48,7 +57,30 @@ clean:
 sensitivity:
 	$(PY) -m eval.sensitivity
 
-# Not yet implemented -- fail loudly rather than silently doing nothing.
+analyze:
+	$(PY) -m eval.analyst
+
+llm-check:
+	$(PY) -m rcp.llm.check
+
 live:
-	@echo "'$@' needs rcp/execute/razorpay_rest.py and test-mode API keys."
-	@exit 1
+	@echo "Sending real Razorpay test-mode Payment Links. Ctrl-C to stop."
+	RCP_EXECUTOR=razorpay_rest $(PY) -m eval.run --mode control_plane --seed $(SEED)
+
+demo-agent:
+	$(PY) -m eval.run --mode control_plane --seed $(SEED) --live 5
+
+dashboard:
+	$(PY) -m uvicorn app.main:app --reload --port 8000
+
+drafts:
+	$(PY) -m rcp.agents.composer --max-drafts 6
+
+strategy:
+	$(PY) -m rcp.agents.strategy --seed $(SEED) --arm baseline
+
+redteam:
+	$(PY) -m rcp.agents.redteam --max-attacks 8
+
+voice:
+	$(PY) -m scripts.generate_voice

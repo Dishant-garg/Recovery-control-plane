@@ -1,0 +1,206 @@
+/* Theme-aware by tokens. Light is defined on bare :root so a viewer with no
+   explicit preference still gets a complete palette; dark redefines only the
+   tokens. */
+:root {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --ink: #1a1a19;
+  --dim: #6b6a66;
+  --line: #e3e0da;
+  --accent: #b4530a;
+  --good: #1f7a4d;
+  --bad: #b3261e;
+  --warn: #8a6100;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16161a;
+    --panel: #1e1e23;
+    --ink: #e8e6e1;
+    --dim: #9a978f;
+    --line: #32323a;
+    --accent: #e8974a;
+    --good: #57c08a;
+    --bad: #ef7a72;
+    --warn: #d6ab55;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+/* ---- header ---- */
+
+header { border-bottom: 1px solid var(--line); background: var(--panel); }
+
+.bar {
+  display: flex; align-items: center; gap: 24px;
+  min-height: 56px; flex-wrap: wrap;
+}
+
+.brand {
+  font-family: var(--mono); font-weight: 600; font-size: 13px;
+  letter-spacing: .02em; color: var(--ink); text-decoration: none;
+}
+.brand span { color: var(--dim); }
+
+nav { display: flex; gap: 4px; margin-right: auto; }
+
+nav a {
+  font-family: var(--mono); font-size: 13px; text-decoration: none;
+  color: var(--dim); padding: 5px 10px; border-radius: 5px;
+}
+nav a:hover { color: var(--ink); background: var(--bg); }
+nav a.on { color: var(--accent); background: var(--bg); }
+
+.switch { display: flex; gap: 6px; }
+
+select, input, textarea, button {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- structure ---- */
+
+main { padding: 28px 20px 56px; }
+
+h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -.01em; }
+h2 {
+  font-size: 12px; font-family: var(--mono); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .07em;
+  color: var(--dim); margin: 34px 0 12px;
+}
+.lede { color: var(--dim); margin: 0 0 26px; max-width: 62ch; }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 16px 18px;
+}
+
+.grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.stat .k {
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.stat .v {
+  font-family: var(--mono); font-size: 25px; margin-top: 5px;
+  letter-spacing: -.02em;
+}
+.stat .sub { font-size: 12px; color: var(--dim); margin-top: 3px; }
+
+/* ---- tables ---- */
+
+.scroll { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td {
+  text-align: left; padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+th {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  color: var(--dim); text-transform: uppercase; letter-spacing: .06em;
+}
+td.num, th.num { text-align: right; font-family: var(--mono); }
+tbody tr:hover td { background: var(--panel); }
+td a { color: var(--accent); text-decoration: none; }
+td a:hover { text-decoration: underline; }
+
+/* ---- chips ---- */
+
+.chip {
+  display: inline-block; font-family: var(--mono); font-size: 11px;
+  padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim);
+}
+.chip.on { border-color: var(--accent); color: var(--accent); }
+.chip.good { color: var(--good); border-color: currentColor; }
+.chip.bad { color: var(--bad); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.filters a { text-decoration: none; }
+
+/* ---- timeline ---- */
+
+.tl { list-style: none; margin: 0; padding: 0; }
+
+.tl li {
+  position: relative; padding: 0 0 20px 26px;
+  border-left: 2px solid var(--line);
+}
+.tl li:last-child { border-left-color: transparent; padding-bottom: 0; }
+
+.tl li::before {
+  content: ""; position: absolute; left: -6px; top: 4px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--line);
+}
+.tl li.acted::before { border-color: var(--good); background: var(--good); }
+.tl li.held::before { border-color: var(--warn); }
+.tl li.closed::before { border-color: var(--bad); background: var(--bad); }
+
+.tl .head {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 12px;
+}
+.tl .why { color: var(--dim); font-size: 13px; margin: 5px 0 0; }
+
+.msg {
+  margin-top: 9px; padding: 11px 13px; border-radius: 7px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.msg .text { white-space: pre-wrap; font-size: 13px; }
+.msg .meta {
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  margin-top: 7px; display: flex; gap: 10px; flex-wrap: wrap;
+}
+
+code, pre { font-family: var(--mono); font-size: 12px; }
+pre {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 7px; padding: 12px; overflow-x: auto;
+}
+
+.bar-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+.bar-row .label { font-family: var(--mono); font-size: 12px; min-width: 160px; }
+.bar-row .track {
+  flex: 1; height: 7px; background: var(--line);
+  border-radius: 4px; overflow: hidden; min-width: 60px;
+}
+.bar-row .fill { height: 100%; background: var(--accent); }
+.bar-row .n { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+
+footer {
+  border-top: 1px solid var(--line); padding: 18px 20px 40px;
+  color: var(--dim); font-size: 12px;
+}
+
+.banner {
+  padding: 11px 14px; border-radius: 7px; font-family: var(--mono);
+  font-size: 13px; border: 1px solid;
+}
+.banner.ok { color: var(--good); border-color: currentColor; }
+.banner.fail { color: var(--bad); border-color: currentColor; }
+
+.muted { color: var(--dim); }
+.right { text-align: right; }

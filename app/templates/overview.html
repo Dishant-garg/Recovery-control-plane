@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Overview · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>What we recovered, and what we deliberately did not</h1>
+<p class="lede">
+  Any dunning tool can report what it collected. The claim this system has to
+  defend is the second half: these customers were not contacted on purpose,
+  and here is the reason and the amount attached to each decision.
+</p>
+
+<div class="grid">
+  <div class="panel stat">
+    <div class="k">recovered</div>
+    <div class="v">Rs {{ money["recovered"] | rupees }}</div>
+    <div class="sub">{{ money["wins"] }} payments across {{ total_cases }} cases</div>
+  </div>
+  <div class="panel stat">
+    <div class="k">actions sent</div>
+    <div class="v">{{ "{:,}".format(sent) }}</div>
+    <div class="sub">
+      {{ "%.2f"|format(sent / total_cases if total_cases else 0) }} per case
+    </div>
+  </div>
+  <div class="panel stat">
+    <div class="k">opt-outs</div>
+    <div class="v">{{ money["opt_outs"] }}</div>
+    <div class="sub">the cost the contact cap exists to avoid</div>
+  </div>
+  <div class="panel stat">
+    <div class="k">cases recovered</div>
+    <div class="v">{{ states.get("recovered", 0) }}</div>
+    <div class="sub">
+      {{ states.get("written_off", 0) }} written off ·
+      {{ states.get("opted_out", 0) }} opted out
+    </div>
+  </div>
+</div>
+
+<h2>Why an event produced no action</h2>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>reason</th>
+        <th class="num">decisions</th>
+        <th class="num">amount held back</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in suppression %}
+      <tr>
+        <td>{{ row["bucket"] }}</td>
+        <td class="num">{{ "{:,}".format(row["n"]) }}</td>
+        <td class="num">Rs {{ row["paise"] | rupees }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">nothing suppressed in this arm</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Why we stopped chasing a case</h2>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>stopping rule</th>
+        <th class="num">cases</th>
+        <th class="num">amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in write_offs %}
+      <tr>
+        <td><code>{{ row["rule"] }}</code></td>
+        <td class="num">{{ "{:,}".format(row["n"]) }}</td>
+        <td class="num">Rs {{ row["paise"] | rupees }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="grid" style="margin-top:26px">
+  <div class="panel">
+    <h2 style="margin-top:0">channel mix</h2>
+    {% set top = channels[0]["n"] if channels else 1 %}
+    {% for row in channels %}
+    <div class="bar-row">
+      <span class="label">{{ row["channel"] }}</span>
+      <span class="track">
+        <span class="fill" style="width: {{ (100 * row['n'] / top) | round(1) }}%"></span>
+      </span>
+      <span class="n">{{ row["n"] }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">language sent in</h2>
+    {% if languages %}
+      {% set ltop = languages[0]["n"] %}
+      {% for row in languages %}
+      <div class="bar-row">
+        <span class="label">{{ row["lang"] }}</span>
+        <span class="track">
+          <span class="fill" style="width: {{ (100 * row['n'] / ltop) | round(1) }}%"></span>
+        </span>
+        <span class="n">{{ row["n"] }}</span>
+      </div>
+      {% endfor %}
+      <p class="muted" style="font-size:12px;margin:12px 0 0">
+        Hinglish is a cost decision as much as a comprehension one: Devanagari
+        falls outside GSM-7, so it bills at 70 characters per SMS segment
+        against 160.
+      </p>
+    {% else %}
+      <p class="muted">no composed messages in this arm — retries carry no copy</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if results and results.get("mean") %}
+<h2>Three arms, {{ results["seeds"] | length }} seed{{ "" if results["seeds"] | length == 1 else "s" }}</h2>
+<p class="lede" style="margin-bottom:14px">
+  <code>capped</code> is the arm that matters. Beating <code>baseline</code>
+  only shows that unlimited contact is bad, which nobody disputes.
+</p>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>metric</th>
+        {% for m in ["baseline", "capped", "control_plane"] %}
+          {% if m in results["mean"] %}<th class="num">{{ m }}</th>{% endif %}
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% set rows = [
+        ("actions sent", "actions_sent", "n"),
+        ("contacts / customer", "contacts_per_customer", "f"),
+        ("recovery / send", "recovery_per_send", "pct"),
+        ("margin / send", "margin_per_send_paise", "rs"),
+        ("recovered", "recovered_paise", "rs"),
+        ("churn cost", "churn_cost_paise", "rs"),
+        ("net value", "net_value_paise", "rs"),
+        ("attempts / case", "attempts_per_case", "f"),
+        ("refusals costing a rung", "refusals_costing_rung", "n"),
+        ("never acted (must be 0)", "cases_never_acted", "n"),
+      ] %}
+      {% for label, key, kind in rows %}
+      <tr>
+        <td>{{ label }}</td>
+        {% for m in ["baseline", "capped", "control_plane"] %}
+          {% if m in results["mean"] %}
+            {% set v = results["mean"][m].get(key, 0) %}
+            <td class="num">
+              {%- if kind == "rs" -%}Rs {{ v | rupees }}
+              {%- elif kind == "pct" -%}{{ "%.1f"|format(v * 100) }}%
+              {%- elif kind == "f" -%}{{ "%.2f"|format(v) }}
+              {%- else -%}{{ "%.0f"|format(v) }}{%- endif -%}
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

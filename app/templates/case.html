@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}{{ case["id"][:14] }} · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>{{ case["segment"] }} · Rs {{ case["amount"] | rupees }}</h1>
+<p class="lede">
+  <code>{{ case["root_cause"] }}</code> ·
+  failed {{ case["occurred_at"] | when }} ·
+  customer <code>{{ case["customer_id"][:16] }}</code>
+</p>
+
+<div class="grid">
+  <div class="panel stat">
+    <div class="k">state</div>
+    <div class="v" style="font-size:19px">{{ case["state"] }}</div>
+    <div class="sub">{{ case["close_reason"] or "still being worked" }}</div>
+  </div>
+  <div class="panel stat">
+    <div class="k">rungs consumed</div>
+    <div class="v">{{ case["rung"] }}</div>
+    <div class="sub">{{ case["attempts"] }} actually sent</div>
+  </div>
+  <div class="panel stat">
+    <div class="k">contacts, all cases</div>
+    <div class="v">{{ contacts }}</div>
+    <div class="sub">what the contact cap counts</div>
+  </div>
+  <div class="panel stat">
+    <div class="k">language</div>
+    <div class="v" style="font-size:19px">{{ case["language"] }}</div>
+    <div class="sub">LTV Rs {{ case["ltv_paise"] | rupees }}</div>
+  </div>
+</div>
+
+<h2>Ask the agent</h2>
+<p class="lede">
+  Run the recovery agent on this case now and watch it work. It has three moves
+  — escalate, hold, stop — and it can ask the compliance engine what would
+  happen <em>before</em> committing, so it negotiates with its bounds instead of
+  being silently overruled.
+</p>
+
+<div class="panel">
+  <button onclick="runAgent()">run the agent on this case</button>
+  <span class="muted" style="font-size:12px;margin-left:10px">
+    read-only · no writes · falls back to the deterministic policy with no
+    provider configured
+  </span>
+  <pre id="agent-out" style="margin-top:14px">ready</pre>
+</div>
+
+<h2>Timeline</h2>
+<p class="lede" style="margin-bottom:18px">
+  Every row records <em>who</em> decided it. An escalation the agent chose reads
+  very differently from one a fixed policy produced, and both read differently
+  from a rule firing — which is the difference between a log and an audit trail.
+</p>
+
+<ul class="tl">
+  {% for e in events %}
+  <li class="{{ e['kind'] }}">
+    <div class="head">
+      <span class="chip {{ 'good' if e['kind'] == 'acted'
+                           else 'warn' if e['kind'] == 'held'
+                           else 'bad' if e['kind'] == 'closed' else '' }}">
+        {{ e["kind"] }}
+      </span>
+      {% if e["rung"] is not none %}
+        <span class="chip">rung {{ e["rung"] }}{% if e["detail"].get("channel") %}
+          · {{ e["detail"]["channel"] }}{% endif %}</span>
+      {% endif %}
+      <span class="chip">by {{ e["decided_by"] }}</span>
+      {% if e["detail"].get("disposition") %}
+        <span class="chip {{ 'bad' if e['detail'].get('rung_spent') else 'warn' }}">
+          {{ e["detail"]["disposition"] }}{{ " · rung spent"
+             if e["detail"].get("rung_spent") else " · rung kept" }}
+        </span>
+      {% endif %}
+      <span class="muted" style="margin-left:auto">{{ e["at"] | when }}</span>
+    </div>
+
+    <p class="why">{{ e["reason"] }}</p>
+
+    {% if e["detail"].get("rule") %}
+      <p class="why">
+        refused by <code>{{ e["detail"]["rule"] }}</code>
+      </p>
+    {% endif %}
+
+    {% if e["message"] %}
+    <div class="msg">
+      <div class="text">{{ e["message"]["text"] }}</div>
+      <div class="meta">
+        <span><code>{{ e["message"]["template_id"] }}</code></span>
+        <span>{{ e["message"]["language"] }}</span>
+        <span>{{ e["message"]["purpose"] }}</span>
+        {% if e.get("segments") and e["action"]["channel"] == "sms" %}
+          <span>{{ e["segments"][0] }} SMS segment{{ "" if e["segments"][0] == 1
+                 else "s" }} · {{ e["segments"][1] }}</span>
+        {% endif %}
+        {% if e["action"] and e["action"]["status"] %}
+          <span>{{ e["action"]["status"] }}</span>
+        {% endif %}
+      </div>
+      {% if e["message"].get("findings") %}
+        <div class="meta">
+          {% for f in e["message"]["findings"] %}
+            <span class="chip {{ 'bad' if f['severity'] == 'error' else 'warn' }}">
+              {{ f["rule"] }}
+            </span>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    {% elif e["action"] and e["action"]["channel"] == "retry" %}
+    <div class="msg">
+      <div class="text muted">
+        Silent retry on the rail — the customer sees nothing, so there is no
+        copy to compose.
+      </div>
+    </div>
+    {% endif %}
+
+    {% if e.get("rationale") %}
+      <p class="why"><em>{{ e["rationale"] }}</em></p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+{% if outcomes %}
+<h2>Outcomes</h2>
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>observed</th><th>result</th>
+        <th class="num">recovered</th><th>opted out</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in outcomes %}
+      <tr>
+        <td>{{ o["observed_at"] | when }}</td>
+        <td>
+          <span class="chip {{ 'good' if o['succeeded'] else '' }}">
+            {{ "paid" if o["succeeded"] else "no response" }}
+          </span>
+        </td>
+        <td class="num">Rs {{ o["recovered_paise"] | rupees }}</td>
+        <td>{{ "yes" if o["opted_out"] else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<p style="margin-top:26px">
+  <a href="/cases?seed={{ seed }}&arm={{ arm }}" class="chip">back to cases</a>
+</p>
+
+<script>
+async function runAgent() {
+  const out = document.getElementById("agent-out");
+  out.textContent = "thinking…";
+  out.style.color = "";
+  try {
+    const r = await fetch("/api/agent/decide", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        case_id: {{ case["id"] | tojson }},
+        seed: {{ seed }}, arm: {{ arm | tojson }}
+      })
+    });
+    const j = await r.json();
+    if (!r.ok) { out.textContent = "HTTP " + r.status + " — " + (j.detail || ""); return; }
+
+    const lines = [];
+    lines.push(j.was_live
+      ? "LIVE — " + j.provider + " " + j.model
+      : "DETERMINISTIC — no provider reached; this is the routine the batch runs");
+    if (j.degraded) lines.push("  provider failed: " + j.degraded);
+    lines.push("");
+
+    if (j.rung === null) {
+      lines.push("  the ladder is exhausted for this case, so there is no rung");
+      lines.push("  to reason about — the agent hands straight back to policy.");
+      lines.push("");
+    }
+
+    for (const t of j.trail) {
+      lines.push("  " + t.tool);
+      if (t.input && Object.keys(t.input).length) {
+        lines.push("      in   " + JSON.stringify(t.input));
+      }
+      if (t.output) lines.push("      out  " + t.output);
+    }
+
+    lines.push("");
+    lines.push("  DECISION  " + j.move.action.toUpperCase()
+               + (j.move.action === "hold" ? " for " + j.move.hold_days + "d" : ""));
+    lines.push("            " + j.move.reason);
+    lines.push("            decided_by = " + j.move.decided_by);
+    lines.push("");
+    lines.push("  Compliance still runs after this, whatever it chose.");
+    lines.push("  Live runs left this session: " + j.budget_left);
+
+    out.textContent = lines.join("\n");
+    out.style.color = j.was_live ? "var(--good)" : "";
+  } catch (e) {
+    out.textContent = "error: " + e;
+    out.style.color = "var(--bad)";
+  }
+}
+</script>
+{% endblock %}

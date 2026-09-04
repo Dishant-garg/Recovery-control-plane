@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Cases · Recovery Control Plane{% endblock %}
+
+{% block body %}
+<h1>Cases</h1>
+<p class="lede">
+  One case per failed payment, worked over days until it settles or a stopping
+  rule closes it. Click through for the timeline — every rung, who decided it,
+  and every refusal with the rule that produced it.
+</p>
+
+<div class="filters">
+  <a href="/cases?seed={{ seed }}&arm={{ arm }}&segment={{ segment }}"
+     class="chip {{ 'on' if not state }}">all states</a>
+  {% for row in facets["state"] %}
+  <a href="/cases?seed={{ seed }}&arm={{ arm }}&segment={{ segment }}&state={{ row['v'] }}"
+     class="chip {{ 'on' if state == row['v'] }}">{{ row["v"] }} · {{ row["n"] }}</a>
+  {% endfor %}
+</div>
+
+<div class="filters">
+  <a href="/cases?seed={{ seed }}&arm={{ arm }}&state={{ state }}"
+     class="chip {{ 'on' if not segment }}">all segments</a>
+  {% for row in facets["segment"] %}
+  <a href="/cases?seed={{ seed }}&arm={{ arm }}&state={{ state }}&segment={{ row['v'] }}"
+     class="chip {{ 'on' if segment == row['v'] }}">{{ row["v"] }} · {{ row["n"] }}</a>
+  {% endfor %}
+</div>
+
+<div class="panel scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>case</th>
+        <th>segment</th>
+        <th>root cause</th>
+        <th>state</th>
+        <th class="num">amount</th>
+        <th class="num">rung</th>
+        <th class="num">sent</th>
+        <th class="num">timeline</th>
+        <th>closed because</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>
+          <a href="/cases/{{ row['id'] }}?seed={{ seed }}&arm={{ arm }}">
+            {{ row["id"][:14] }}
+          </a>
+        </td>
+        <td>{{ row["segment"] }}</td>
+        <td><code>{{ row["root_cause"] }}</code></td>
+        <td>
+          <span class="chip {{ 'good' if row['state'] == 'recovered'
+                               else 'bad' if row['state'] in ('opted_out',)
+                               else '' }}">{{ row["state"] }}</span>
+        </td>
+        <td class="num">Rs {{ row["amount_paise"] | rupees }}</td>
+        <td class="num">{{ row["rung"] }}</td>
+        <td class="num">{{ row["attempts"] }}</td>
+        <td class="num">{{ row["timeline_len"] }}</td>
+        <td class="muted">{{ (row["close_reason"] or "—")[:44] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="muted">no cases match</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="muted" style="font-size:12px;margin-top:12px">
+  {{ rows | length }} shown, largest first.
+</p>
+{% endblock %}
