@@ -35,7 +35,7 @@ class ExecResult(BaseModel):
 
 @runtime_checkable
 class Executor(Protocol):
-    """Implementations: simulated.py (default), razorpay_mcp.py, razorpay_rest.py.
+    """Implementations: simulated.py (default), razorpay_rest.py.
 
     `action` is a row from the actions table. Implementations MUST treat
     `action["idempotency_key"]` as the deduplication key when the provider

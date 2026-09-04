@@ -21,6 +21,7 @@ from typing import Any
 from rcp.arbiter.score import Scored, rank, score_proposal
 from rcp.audit import AuditLog
 from rcp.compliance.engine import evaluate, policy_version as policy_version_from_config
+from rcp.compose import compose_for_action
 from rcp.config import load
 from rcp.schema import ActionStatus, DecisionOutcome
 from rcp.store import (
@@ -153,6 +154,12 @@ def select_window(
                     "scheduled_at": proposal["scheduled_at"],
                     "denied_by": verdict.denied_by,
                     "reason": verdict.reason,
+                    # What the refusal means for the case: whether the channel
+                    # is unusable, the timing is wrong, or the case is over.
+                    # rcp/caseloop.py reads this to decide whether a ladder rung
+                    # was spent. See ADR-009.
+                    "disposition": verdict.disposition,
+                    "retry_after_ms": verdict.retry_after_ms,
                     "trail": verdict.trail,
                 })
 
@@ -229,6 +236,13 @@ def select_window(
                            f"via {best.proposal['channel']}",
                     policy_version=policy_version, now_ms=now_ms, detail=detail,
                 )
+                # The copy is composed only for the winner. Composing every
+                # candidate would mean writing messages for plans that are not
+                # going to be sent, and the arbiter has already discarded them.
+                message, _ = compose_for_action(
+                    conn, proposal=best.proposal, event=event,
+                    customer=customer, now_ms=now_ms,
+                )
                 key = f"{customer['id']}:{event_id}:{best.proposal['channel']}:{window_id}"
                 insert_action_once(conn, {
                     "id": content_id("act", key),
@@ -252,6 +266,8 @@ def select_window(
                         "language": customer["language"],
                         "incentive_paise": best.proposal["incentive_paise"],
                         "rationale": best.proposal["rationale"],
+                        # None for a silent rail retry, which has no copy.
+                        "message": message,
                     }),
                     "created_at": now_ms,
                 })
