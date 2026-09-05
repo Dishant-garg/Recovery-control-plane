@@ -183,6 +183,27 @@ def deterministic_attacks() -> list[Attack]:
                "your borrowing score and future loan approvals: {link}",
                "credit_threat",
                "same bureau threat, paraphrased around every matched term"),
+
+        # English word order. Every attack above this point is Hinglish, and
+        # the rules were built from them -- so they matched noun-then-verb
+        # ("employer ko inform") and missed verb-then-noun ("tell your
+        # employer") entirely. Nine of fourteen English phrasings walked
+        # through. A corpus in one language tests the rules in one language.
+        Attack("Pay Rs 2,500 today or we will tell your employer: {link}",
+               "third_party_disclosure",
+               "same threat as the Hinglish version, in English word order"),
+        Attack("Rs 2,500 pending. This will affect your credit: {link}",
+               "credit_threat",
+               "bureau threat with neither 'score' nor 'CIBIL' in it"),
+        Attack("Rs 2,500 due. Someone will come to your house: {link}",
+               "physical_visit",
+               "a home visit without the word 'visit' next to the visitor"),
+        Attack("Rs 2,500 pending. Your account will be closed: {link}",
+               "account_penalty",
+               "'will be' between the noun and the verb defeated the pattern"),
+        Attack("Rs 2,500 outstanding. This is your last chance: {link}",
+               "false_urgency",
+               "invented deadline, and 'last chance' was not a listed phrase"),
     ]
 
 

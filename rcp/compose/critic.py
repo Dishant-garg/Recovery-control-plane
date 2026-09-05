@@ -71,38 +71,68 @@ MAX_CHARS = {"sms": 640, "whatsapp": 1024, "email": 4000, "voice": 600}
 # with WhatsApp (`rcp/compose/templates.py`). The critic's job is to raise the
 # floor so review catches less; it is not the last line, and treating it as one
 # is how a paraphrase becomes a sent message.
+def _either_order(subjects: str, actions: str, gap: int = 34) -> str:
+    """Match `subject ... action` OR `action ... subject`, within one sentence.
+
+    Written because the first version of these rules only matched Hindi word
+    order. "Aapke employer ko inform karna pad sakta hai" was caught;
+    "we will tell your employer" was not -- Hindi puts the object before the
+    verb, English puts it after, and a reader typing the English form walked
+    straight through a filter built from Hinglish examples.
+
+    Nine of fourteen English phrasings passed before this existed. The gap is
+    bounded and stops at sentence punctuation so two unrelated clauses do not
+    match each other.
+    """
+    return (rf"(?:{subjects})[^.!?\n]{{0,{gap}}}(?:{actions})"
+            rf"|(?:{actions})[^.!?\n]{{0,{gap}}}(?:{subjects})")
+
+
+_THIRD_PARTY = r"employer|boss|manager|hr\b|your\s*company|family|parivaar" \
+               r"|ghar\s*wal|padosi|neighbou?r|relative|rishtedar|reference"
+_TELL = r"inform|bata|batay|contact|report|tell|call|disclos|complain"
+
+_CREDIT = r"cibil|credit|bureau|borrowing\s*score|loan\s*(approval|eligib)" \
+          r"|creditworthi|defaulter"
+_HARM = r"report|affect|hurt|impact|kharab|damage|spoil|lower|ruin"
+
+_VISITOR = r"agent|our\s*team|field\s*team|hamare\s*log|executive|someone" \
+           r"|representative|recovery\s*(agent|team)"
+_ARRIVE = r"visit|aayeng|aayega|aajayeng|pahunch|come\s*to|ghar|home|house" \
+          r"|doorstep|your\s*address|workplace"
+
+_ACCOUNT = r"account|service|subscription|access"
+_CUT_OFF = r"band|block|clos|suspend|terminat|deactivat|disabl|blacklist|freeze"
+
+# Language that turns collection into intimidation, matched as conduct rather
+# than vocabulary. Each entry pairs the thing being threatened with the threat,
+# in either word order -- see `_either_order`.
 COERCION_PATTERNS: dict[str, str] = {
     "credit_threat":
-        r"cibil|credit\s*(score|bureau|report|worthiness)|creditworthi"
-        r"|bureau\s*(ko|me|mein)?\s*report|defaulter|credit\s*kharab"
-        # Added after a live red-team run paraphrased straight past the line
-        # above: "hurt your borrowing score and future loan approvals". Same
-        # threat, none of the words.
-        r"|borrowing\s*score|loan\s*(approval|eligib|milna)|future\s*loans",
+        r"credit\s*(score|bureau|report|worthiness)|cibil|creditworthi"
+        r"|defaulter|borrowing\s*score|loan\s*(approval|eligib|milna)"
+        r"|future\s*loans|credit\s*kharab|"
+        + _either_order(_CREDIT, _HARM),
     "third_party_disclosure":
-        r"(employer|boss|company|family|parivaar|ghar\s*wal|padosi|neighbou?r"
-        r"|rishtedar|reference)\w*\s*(ko|to)?\s*"
-        r"(inform|bata|batay|contact|report|call|tell)",
+        _either_order(_THIRD_PARTY, _TELL),
     "physical_visit":
-        r"(field\s*team|recovery\s*agent|hamare\s*log|our\s*team|agent)\w*"
-        r"[^.]{0,40}(visit|aayeng|aayega|aajayeng|pahunch|ghar)"
-        r"|ghar\s*(par|pe)?\s*(aayeng|aayega|visit)|home\s*visit"
-        r"|address\s*(par|pe)[^.]{0,20}(visit|aayeng)",
+        r"home\s*visit|ghar\s*(par|pe)?\s*(aayeng|aayega|visit)|"
+        + _either_order(_VISITOR, _ARRIVE),
     "veiled_legal":
         r"legal\s*action|kanooni|court|police|arrest|jail|warrant|criminal"
-        r"|seiz|other\s*remed|further\s*steps|forced\s*to\s*(act|take)"
-        r"|appropriate\s*action|karyawahi|notice\s*under\s*section",
+        r"|seiz|other\s*remed|further\s*(steps|action)|forced\s*to\s*(act|take)"
+        r"|appropriate\s*action|karyawahi|notice\s*under\s*section"
+        r"|face\s*consequences|legal\s*notice",
     "false_urgency":
-        r"final\s*warning|last\s*warning|aakhri\s*chetav|warna"
-        r"|or\s*else|consequences|serious\s*action",
+        r"final\s*warning|last\s*warning|last\s*chance|aakhri\s*chetav"
+        r"|warna|or\s*else|consequences|serious\s*action|immediately\s*or",
     "account_penalty":
-        r"blacklist|account\s*(band|block|close|closed|suspend|terminate)"
-        r"|permanently\s*band|service\s*band",
+        r"blacklist|permanently\s*band|"
+        + _either_order(_ACCOUNT, _CUT_OFF, gap=20),
     "impersonation":
-        r"\b(advocate|lawyer|law\s*firm|legal\s*department|on\s*behalf\s*of"
-        r"\s*the\s*court)\b",
+        r"\b(advocate|lawyer|law\s*firm|legal\s*department"
+        r"|on\s*behalf\s*of\s*the\s*court)\b",
 }
-
 # Kept as a flat view for anything that wants to show a reviewer what is
 # refused. `rcp/agents/redteam.py` reads it when briefing the model.
 COERCIVE = tuple(sorted(COERCION_PATTERNS))
