@@ -598,7 +598,7 @@ async def agent_decide(request: Request):
 
     from rcp.agents.recovery import RecoveryAgent
     from rcp.env import load_dotenv
-    from rcp.escalation import channel_at, next_rung
+    from rcp.escalation import channel_at, expected_value, next_rung, should_stop
     from rcp.precedent import lookup
 
     # Loaded here rather than at import. Without it the "run the agent" button
@@ -645,6 +645,31 @@ async def agent_decide(request: Request):
             ).posterior
 
         now_ms = int(case["next_review_at"] or case["opened_at"])
+
+        # Stopping rules run BEFORE the agent, exactly as `work_due_cases`
+        # orders it. Skipping them let this route produce decisions the system
+        # would never make -- an exhausted ladder came back as
+        # "ESCALATE, rung None", which is not a move that exists.
+        #
+        # The agent is asked what to do with a case that is still workable. A
+        # case a rule has already closed is not a question for it.
+        stop = should_stop(
+            case, now_ms=now_ms, opted_out=bool(customer["opted_out"]),
+            expected_value_paise=expected_value(case, posterior),
+            root_cause=event["root_cause"],
+        )
+        if stop is not None:
+            return JSONResponse({
+                "case_id": case_id, "rung": rung, "channel": channel,
+                "posterior": round(posterior, 4),
+                "stopped_by": {"rule": stop.rule, "reason": stop.reason,
+                               "closes_as": stop.close_state,
+                               "observed": stop.observed},
+                "move": None, "trail": [], "provider": "stopping_rule",
+                "model": "", "degraded": None, "was_live": False,
+                "budget_left": max(0, AGENT_RUN_BUDGET - _agent_runs),
+            })
+
         agent = RecoveryAgent(
             conn, live_budget=1 if _agent_runs < AGENT_RUN_BUDGET else 0
         )

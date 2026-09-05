@@ -178,17 +178,31 @@ async function runAgent() {
     if (!r.ok) { out.textContent = "HTTP " + r.status + " — " + (j.detail || ""); return; }
 
     const lines = [];
+
+    // A stopping rule fired, so the agent was never asked. The real loop
+    // orders it this way too -- a case a rule has closed is not a question
+    // for the agent, and showing it "decide" anyway would put a move on
+    // screen that the system would never make.
+    if (j.stopped_by) {
+      lines.push("STOPPED BEFORE THE AGENT — a rule closed this case");
+      lines.push("");
+      lines.push("  rule      " + j.stopped_by.rule);
+      lines.push("  reason    " + j.stopped_by.reason);
+      lines.push("  closes as " + j.stopped_by.closes_as);
+      lines.push("");
+      lines.push("  Stopping rules run before the agent, so it is never asked");
+      lines.push("  about a case that is already finished. Pick an open case");
+      lines.push("  to watch it reason.");
+      out.textContent = lines.join("\n");
+      out.style.color = "";
+      return;
+    }
+
     lines.push(j.was_live
       ? "LIVE — " + j.provider + " " + j.model
       : "DETERMINISTIC — no provider reached; this is the routine the batch runs");
     if (j.degraded) lines.push("  provider failed: " + j.degraded);
     lines.push("");
-
-    if (j.rung === null) {
-      lines.push("  the ladder is exhausted for this case, so there is no rung");
-      lines.push("  to reason about — the agent hands straight back to policy.");
-      lines.push("");
-    }
 
     for (const t of j.trail) {
       lines.push("  " + t.tool);

@@ -438,3 +438,32 @@ def test_the_overview_warns_when_the_run_is_partial(client, seed, tmp_path):
         f"{len(body['seeds'])} seeds on disk; warning "
         f"{'missing' if partial else 'shown when it should not be'}"
     )
+
+
+def test_a_stopped_case_never_reaches_the_agent(client, seed, monkeypatch):
+    """Stopping rules run before the agent, exactly as `work_due_cases` orders it.
+
+    Without that, this route produced moves the system would never make: an
+    exhausted ladder came back as `ESCALATE, rung None (None)`, which is not a
+    move that exists. A demo surface that invents decisions is worse than one
+    that shows none.
+    """
+    monkeypatch.setenv("RCP_LLM", "fallback")
+    from rcp.store import DATA_DIR, connect
+
+    conn = connect(DATA_DIR / f"seed_{seed}" / "rcp_control_plane.db",
+                   read_only=True)
+    try:
+        row = conn.execute(
+            "SELECT id FROM cases WHERE close_reason LIKE 'ladder_exhausted%' "
+            "LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        pytest.skip("no ladder-exhausted case in this run")
+
+    body = client.post("/api/agent/decide", json={"case_id": row["id"]}).json()
+    assert body["stopped_by"]["rule"] == "ladder_exhausted"
+    assert body["move"] is None, "the agent must not be asked"
+    assert body["trail"] == []
