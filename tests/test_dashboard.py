@@ -412,3 +412,29 @@ def test_an_exhausted_case_does_not_spend_the_live_budget(client, seed):
 def test_unknown_case_is_a_404_for_the_agent(client):
     r = client.post("/api/agent/decide", json={"case_id": "case_nope"})
     assert r.status_code == 404
+
+
+def test_the_overview_warns_when_the_run_is_partial(client, seed, tmp_path):
+    """A short run is not wrong, it is a different measurement -- and it reads
+    exactly like the real one.
+
+    This has now caused three separate rounds of confusion: `make eval SEEDS=42`
+    leaves a single-seed `results.json`, the page renders it without comment,
+    and the numbers no longer match the README. Churn is the highest-variance
+    metric in this system, so one seed moved `capped` net value four-fold.
+    """
+    import json as _json
+
+    from app.main import results_json
+
+    body = results_json(seed)
+    if body is None:
+        pytest.skip("no results.json for this seed")
+
+    page = client.get("/", params={"seed": seed}).text
+    partial = len(body["seeds"]) < 20
+
+    assert ("Partial run" in page) == partial, (
+        f"{len(body['seeds'])} seeds on disk; warning "
+        f"{'missing' if partial else 'shown when it should not be'}"
+    )

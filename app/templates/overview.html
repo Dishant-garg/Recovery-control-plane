@@ -123,7 +123,18 @@
 </div>
 
 {% if results and results.get("mean") %}
-<h2>Three arms, {{ results["seeds"] | length }} seed{{ "" if results["seeds"] | length == 1 else "s" }}</h2>
+{% set nseeds = results["seeds"] | length %}
+<h2>Three arms, {{ nseeds }} seed{{ "" if nseeds == 1 else "s" }}</h2>
+
+{% if nseeds < 20 %}
+<div class="banner fail" style="margin-bottom:14px">
+  Partial run — this table averages {{ nseeds }} seed{{ "" if nseeds == 1 else "s" }},
+  not the 20 the README quotes. Churn is the highest-variance metric here, so a
+  short run can move net value several-fold without the policy changing at all.
+  Run <code>make eval</code> before quoting anything on this page.
+</div>
+{% endif %}
+
 <p class="lede" style="margin-bottom:14px">
   <code>capped</code> is the arm that matters. Beating <code>baseline</code>
   only shows that unlimited contact is bad, which nobody disputes.
